@@ -1,4 +1,4 @@
-# This repository help you to setup Kubernetes Addons like monitoring and Logging
+This repository help you to setup Kubernetes Addons like monitoring and Logging
 
 - [Monitoring](https://github.com/angudadevops/k8s_addons/tree/master/monitoring)
 - [Logging](https://github.com/angudadevops/k8s_addons/tree/master/logging)
