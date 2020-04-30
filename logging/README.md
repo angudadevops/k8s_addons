@@ -10,5 +10,5 @@ bash logging.sh create
 ```
 To delte the logging components 
 ```
-bash logging.sh delete
+kubectl delete ns logging
 ```
