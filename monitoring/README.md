@@ -14,11 +14,11 @@ kubectl apply -f k8s-monitoring.yaml
 
 2. Deploy each componenet individually to understand how each component has been setup.
 
-Run monitoring.sh as per below
+Run monitoring.yaml as per below
 
 - Example:
 ```
-bash monitoring.sh
+kubectl apply -f monitoring.yaml
 ```
 
 Access grafana dashboard with nodePort as 31114 like below 

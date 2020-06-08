@@ -20,8 +20,9 @@ Please make sure to have at least 4 CPU for this Setup
 
 Example:
 ```
-bash logging.sh create
+kubectl apply -f prod-logging.yaml
 ```
+
 To delte the logging components 
 ```
 kubectl delete ns logging
