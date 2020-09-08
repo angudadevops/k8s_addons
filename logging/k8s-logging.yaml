@@ -336,7 +336,7 @@ metadata:
 spec:
   ports:
   - port: 5601
-    nodePort: 31113
+    nodePort: 31120
   selector:
     app: kibana
   type: NodePort
