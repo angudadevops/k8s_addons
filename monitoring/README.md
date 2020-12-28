@@ -9,7 +9,7 @@ Here Two ways to deploy kubernetes monitorting
 
 Below yaml helps you to setup prometheus, grafana, alertmanager stack. 
 ```
-kubectl apply -f monitoring.yaml
+kubectl apply -f monitoring-all-in-one.yaml
 ```
 
 Access grafana dashboard with nodePort as 31114 like below 
