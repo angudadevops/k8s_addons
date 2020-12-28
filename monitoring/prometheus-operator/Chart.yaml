@@ -1,0 +1,15 @@
+apiVersion: v1
+appVersion: 0.38.1
+deprecated: true
+description: DEPRECATED - This chart will be renamed. See https://github.com/prometheus-community/community/issues/28#issuecomment-670406329
+home: https://github.com/coreos/prometheus-operator
+icon: https://raw.githubusercontent.com/prometheus/prometheus.github.io/master/assets/prometheus_logo-cb55bb5c346.png
+keywords:
+- operator
+- prometheus
+name: prometheus-operator
+sources:
+- https://github.com/coreos/kube-prometheus
+- https://github.com/coreos/prometheus-operator
+- https://coreos.com/operators/prometheus
+version: 9.3.2

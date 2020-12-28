@@ -9,15 +9,6 @@ Here Two ways to deploy kubernetes monitorting
 
 Below yaml helps you to setup prometheus, grafana, alertmanager stack. 
 ```
-kubectl apply -f k8s-monitoring.yaml
-``` 
-
-2. Deploy each componenet individually to understand how each component has been setup.
-
-Run monitoring.yaml as per below
-
-- Example:
-```
 kubectl apply -f monitoring.yaml
 ```
 

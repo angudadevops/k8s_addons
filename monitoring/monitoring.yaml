@@ -190,15 +190,31 @@ metadata:
 data:
   prometheus.rules: |-
     groups:
-    - name: devopscube demo alert
+    - name: kubernetes-system
       rules:
-      - alert: High Pod Memory
-        expr: sum(container_memory_usage_bytes) > 1
-        for: 1m
+      - alert: Instance Down
+        expr: up == 0
+        for: 5m
         labels:
-          severity: slack
+          severity: critical
         annotations:
-          summary: High Memory Usage
+          title: 'Instance {{ $labels.instance }} down'
+          description: '{{ $labels.instance }} of job {{ $labels.job }} has been down for more than 1 minute.'
+      - alert: NodeDiskSpaceFree
+        expr: (100 * node_filesystem_free{mountpoint="/"} / node_filesystem_size{mountpoint="/"}) <= 80
+        labels:
+          severity: critical
+        annotations:
+          summary: "Node {{ $labels.nodename }} has 80% or more Free disk space"
+          description: "{{ $labels.nodename }} has only {{ $value }}% or more free."
+      - alert: KubeNodeNotReady
+        expr: kube_node_status_condition{job="kube-state-metrics",condition="Ready",status="true"}
+          == 0
+        annotations:
+         message: '{{ $labels.node }} has been unready for more than 5 minutes.'
+         runbook_url: https://github.com/kubernetes-monitoring/kubernetes-mixin/tree/master/runbook.md#alert-name-kubenodenotready
+        labels:
+          severity: critical
   prometheus.yml: |-
     global:
       scrape_interval: 5s
@@ -209,6 +225,8 @@ data:
         static_configs:
         - targets:
           - "alertmanager.monitoring.svc:9093"
+    rule_files:
+    - /etc/prometheus/*.rules
     scrape_configs:
       - job_name: 'kubernetes-apiservers'
         kubernetes_sd_configs:
@@ -309,6 +327,117 @@ data:
         - source_labels: [__meta_kubernetes_service_name]
           action: replace
           target_label: kubernetes_name
+      - job_name: 'kubernetes-kubelet'
+        scheme: https
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+          insecure_skip_verify: true
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        kubernetes_sd_configs:
+        - role: node
+        relabel_configs:
+        - action: labelmap
+          regex: __meta_kubernetes_node_label_(.+)
+        - target_label: __address__
+          replacement: kubernetes.default.svc.cluster.local:443
+        - source_labels: [__meta_kubernetes_node_name]
+          regex: (.+)
+          target_label: __metrics_path__
+          replacement: /api/v1/nodes/${1}/proxy/metrics
+      - job_name: 'kubernetes-kube-state'
+        kubernetes_sd_configs:
+        - role: pod
+        relabel_configs:
+        - action: labelmap
+          regex: __meta_kubernetes_pod_label_(.+)
+        - source_labels: [__meta_kubernetes_namespace]
+          action: replace
+          target_label: kubernetes_namespace
+        - source_labels: [__meta_kubernetes_pod_name]
+          action: replace
+          target_label: kubernetes_pod_name
+        - source_labels: [__meta_kubernetes_pod_label_grafanak8sapp]
+          regex: .*true.*
+          action: keep
+        - source_labels: ['__meta_kubernetes_pod_label_daemon', '__meta_kubernetes_pod_node_name']
+          regex: 'node-exporter;(.*)'
+          action: replace
+          target_label: nodename
+      - job_name: 'kubernetes-nodes-cadvisor'
+        scrape_interval: 10s
+        scrape_timeout: 10s
+        scheme: https  # remove if you want to scrape metrics on insecure port
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        kubernetes_sd_configs:
+          - role: node
+        relabel_configs:
+          - action: labelmap
+            regex: __meta_kubernetes_node_label_(.+)
+         # Only for Kubernetes ^1.7.3.
+         # See: https://github.com/prometheus/prometheus/issues/2916
+          - target_label: __address__
+            replacement: kubernetes.default.svc:443
+          - source_labels: [__meta_kubernetes_node_name]
+            regex: (.+)
+            target_label: __metrics_path__
+            replacement: /api/v1/nodes/${1}/proxy/metrics/cadvisor
+        metric_relabel_configs:
+          - action: replace
+            source_labels: [id]
+            regex: '^/machine\.slice/machine-rkt\\x2d([^\\]+)\\.+/([^/]+)\.service$'
+            target_label: rkt_container_name
+            replacement: '${2}-${1}'
+          - action: replace
+            source_labels: [id]
+            regex: '^/system\.slice/(.+)\.service$'
+            target_label: systemd_service_name
+            replacement: '${1}'
+      - job_name: 'kubernetes-pods-info'
+        scrape_interval: 1m
+        scrape_timeout: 10s
+        metrics_path: /metrics
+        scheme: http
+        kubernetes_sd_configs:
+        - api_server: null
+          role: pod
+          namespaces:
+            names: []
+        relabel_configs:
+        - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+          separator: ;
+          regex: "true"
+          replacement: $1
+          action: keep
+        - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+          separator: ;
+          regex: (.+)
+          target_label: __metrics_path__
+          replacement: $1
+          action: replace
+        - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+          separator: ;
+          regex: ([^:]+)(?::\d+)?;(\d+)
+          target_label: __address__
+          replacement: $1:$2
+          action: replace
+        - separator: ;
+          regex: __meta_kubernetes_pod_label_(.+)
+          replacement: $1
+          action: labelmap
+        - source_labels: [__meta_kubernetes_namespace]
+          separator: ;
+          regex: (.*)
+          target_label: namespace
+          replacement: $1
+          action: replace
+        - source_labels: [__meta_kubernetes_pod_name]
+          separator: ;
+          regex: (.*)
+          target_label: kubernetes_pod_name
+          replacement: $1
+          action: replace
 ---
 kind: ConfigMap
 apiVersion: v1
@@ -318,33 +447,32 @@ metadata:
 data:
   config.yml: |-
     global:
-    templates:
-    - '/etc/alertmanager/*.tmpl'
+      resolve_timeout: 1m
+      slack_api_url: 'https://hooks.slack.com/services/T01HXJEG9AM/B01J8QTNRCG/tFfWUEWBeYMeKLOf3HLVmQ'
+
     route:
-      receiver: alert-emailer
-      group_by: ['alertname', 'priority']
-      group_wait: 10s
-      repeat_interval: 30m
-      routes:
-        - receiver: slack_demo
-        # Send severity=slack alerts to slack.
-          match:
-            severity: slack
-          group_wait: 10s
-          repeat_interval: 1m
+      receiver: 'slack-notifications'
+      repeat_interval: 15m
 
     receivers:
-    - name: alert-emailer
-      email_configs:
-      - to: demo@devopscube.com
-        send_resolved: false
-        from: from-email@email.com
-        smarthost: smtp.eample.com:25
-        require_tls: false
-    - name: slack_demo
+    - name: 'slack-notifications'
       slack_configs:
-      - api_url: https://hooks.slack.com/services/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sz4Qk
-        channel: '#devopscube-demo'
+      - channel: '#alerts'
+        send_resolved: true
+        icon_url: https://avatars3.githubusercontent.com/u/3380462
+        title: "{{ range .Alerts }}{{ .Annotations.summary }}\n{{ end }}"
+        text: >-
+          {{ range .Alerts -}}
+          *Alert:* {{ .Annotations.title }}{{ if .Labels.severity }} - `{{ .Labels.severity }}`{{ end }}
+
+          *Description:* {{ .Annotations.description }}
+
+          *Details:*
+            {{ range .Labels.SortedPairs }} • *{{ .Name }}:* `{{ .Value }}`
+            {{ end }}
+          {{ end }}
+    templates:
+    - '/etc/alertmanager/*.tmpl'
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -530,7 +658,7 @@ spec:
       serviceAccountName: prometheus
       containers:
       - name: prometheus
-        image: prom/prometheus:v2.1.0
+        image: prom/prometheus:v2.18.2
         imagePullPolicy: Always
         ports:
           - containerPort: 9090
@@ -541,20 +669,30 @@ spec:
       volumes:
       - name: config-prometheus
         configMap:
-         name: prometheus-config
+         name: prometheus-server-conf
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: prometheus
+  name: prometheus-k8s
   namespace: monitoring
 spec:
-  type: ClusterIP
+  type: NodePort
   ports:
   - port: 9090
     targetPort: 9090
+    nodePort: 31115
   selector:
     app: prometheus-server
+---
+apiVersion: v1
+data:
+  prometheus.yaml: ewogICAgImFwaVZlcnNpb24iOiAxLAogICAgImRhdGFzb3VyY2VzIjogWwogICAgICAgIHsKICAgICAgICAgICAgImFjY2VzcyI6ICJwcm94eSIsCiAgICAgICAgICAgICJlZGl0YWJsZSI6IGZhbHNlLAogICAgICAgICAgICAibmFtZSI6ICJwcm9tZXRoZXVzIiwKICAgICAgICAgICAgIm9yZ0lkIjogMSwKICAgICAgICAgICAgInR5cGUiOiAicHJvbWV0aGV1cyIsCiAgICAgICAgICAgICJ1cmwiOiAiaHR0cDovL3Byb21ldGhldXMtazhzLm1vbml0b3Jpbmcuc3ZjOjkwOTAiLAogICAgICAgICAgICAidmVyc2lvbiI6IDEKICAgICAgICB9CiAgICBdCn0=
+kind: Secret
+metadata:
+  name: grafana-datasources
+  namespace: monitoring
+type: Opaque
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -582,6 +720,9 @@ spec:
         volumeMounts:
         - mountPath: /var/lib/grafana
           name: grafana-storage
+        - mountPath: /etc/grafana/provisioning/datasources
+          name: grafana-datasources
+          readOnly: false
         env:
         - name: GF_SERVER_HTTP_PORT
           value: "3000"
@@ -592,6 +733,9 @@ spec:
       volumes:
       - name: grafana-storage
         emptyDir: {}
+      - name: grafana-datasources
+        secret:
+          secretName: grafana-datasources
 ---
 apiVersion: v1
 kind: Service
@@ -832,8 +976,7 @@ metadata:
   namespace: monitoring
   annotations:
     prometheus.io/scrape: 'true'
-    prometheus.io/path:   /
-    prometheus.io/port:   '8080'
+    prometheus.io/path: "/metrics"
 spec:
   selector:
     app: alertmanager

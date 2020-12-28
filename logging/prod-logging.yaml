@@ -7,6 +7,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: elasticsearch-discovery
+  namespace: logging
   labels:
     component: elasticsearch
     role: master
@@ -24,6 +25,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: elasticsearch
+  namespace: logging
   labels:
     component: elasticsearch
     role: data
@@ -39,6 +41,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: elasticsearch-ingest
+  namespace: logging
   labels:
     component: elasticsearch
     role: ingest
@@ -50,15 +53,20 @@ spec:
   - name: http
     port: 9200
 ---
-apiVersion: apps/v1beta1
+apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: es-master
+  namespace: logging
   labels:
     component: elasticsearch
     role: master
 spec:
   replicas: 3
+  selector:
+    matchLabels:
+      component: elasticsearch
+      role: master
   template:
     metadata:
       labels:
@@ -125,15 +133,20 @@ spec:
               medium: ""
             name: "storage"
 ---
-apiVersion: apps/v1beta1
+apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: es-ingest
+  namespace: logging
   labels:
     component: elasticsearch
     role: ingest
 spec:
   replicas: 2
+  selector:
+    matchLabels:
+      component: elasticsearch
+      role: ingest
   template:
     metadata:
       labels:
@@ -195,15 +208,20 @@ spec:
               medium: ""
             name: storage
 ---
-apiVersion: apps/v1beta1
+apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: es-data
+  namespace: logging
   labels:
     component: elasticsearch
     role: data
 spec:
   replicas: 2
+  selector:
+    matchLabels:
+      component: elasticsearch
+      role: data
   template:
     metadata:
       labels:
@@ -267,6 +285,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: curator-config
+  namespace: logging
 data:
   action_file.yml: |-
     ---
@@ -323,8 +342,9 @@ apiVersion: batch/v1beta1
 kind: CronJob
 metadata:
   name: curator
+  namespace: logging
 spec:
-  schedule: 1 0 * * *
+  schedule: 1 0 1 * *
   jobTemplate:
     spec:
       template:
