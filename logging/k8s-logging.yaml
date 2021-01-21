@@ -53,9 +53,10 @@ data:
         Match           *
         Host            ${FLUENT_ELASTICSEARCH_HOST}
         Port            ${FLUENT_ELASTICSEARCH_PORT}
-        Logstash_Format On
         Replace_Dots    On
         Retry_Limit     False
+        Index           fluentd
+        Logstash_DateFormat %Y.%m.%d
   parsers.conf: |
     [PARSER]
         Name   apache

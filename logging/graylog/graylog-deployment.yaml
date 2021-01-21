@@ -1,0 +1,131 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: graylog
+  name: graylog
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: graylog
+  template:
+    metadata:
+      labels:
+        app: graylog
+    spec:
+      containers:
+      - env:
+        - name: GRAYLOG_PASSWORD_SECRET
+          value: EPA33KXfT5N9mtech#
+        - name: GRAYLOG_HTTP_BIND_ADDRESS
+          value: 0.0.0.0:9000
+        - name: GRAYLOG_HTTP_EXTERNAL_URI
+          value: http://10.110.44.110:31050/
+        - name: GRAYLOG_SERVER_JAVA_OPTS
+          value: -Xms1g -Xmx1g -XX:NewRatio=1 -XX:MaxMetaspaceSize=256m -server -XX:+ResizeTLAB
+            -XX:+UseConcMarkSweepGC -XX:+CMSConcurrentMTEnabled -XX:+CMSClassUnloadingEnabled
+            -XX:+UseParNewGC -XX:-OmitStackTraceInFastThrow
+        image: graylog/graylog:4.0
+        imagePullPolicy: IfNotPresent
+        name: graylog-master
+        ports:
+        - containerPort: 9000
+          name: http
+          protocol: TCP
+        - containerPort: 12201
+          name: udp-input
+          protocol: TCP
+        - containerPort: 1514
+          name: tcp-input
+          protocol: TCP
+        readinessProbe:
+          failureThreshold: 4
+          httpGet:
+            path: /api/system/lbstatus
+            port: 9000
+            scheme: HTTP
+          initialDelaySeconds: 120
+          periodSeconds: 3
+          successThreshold: 1
+          timeoutSeconds: 3
+        # resources:
+        #   limits:
+        #     cpu: 15m
+        #     memory: 32Mi
+        #   requests:
+        #     cpu: 10Mi
+        #     memory: 64Mi
+        securityContext:
+          privileged: true
+          runAsUser: 1100
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+        volumeMounts:
+        - mountPath: /usr/share/graylog/data/journal
+          name: graylog-persistent-storage
+          subPath: graylog
+      dnsPolicy: ClusterFirst
+      initContainers:
+      - command:
+        - sh
+        - -c
+        - chown -R 1100:1100 /usr/share/graylog/data/journal
+        - chmod 777 /usr/share/graylog/data/journal/graylog2-committed-read-offset
+        - chmod g+rwx /usr/share/graylog/data/journal/graylog2-committed-read-offset
+        - chgrp 1100 /usr/share/graylog/data/journal/graylog2-committed-read-offset
+        - chown -R 1100:1100 ./graylog_journal
+        - chown -R 1100:1100 /usr/share/graylog/data/journal
+        - chown -R 1100:1100 /usr/share/graylog/data/journal/graylog2-committed-read-offset
+        image: busybox:1.29.2
+        imagePullPolicy: IfNotPresent
+        name: set-dir-owner
+        resources: {}
+        securityContext:
+          privileged: true
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+        volumeMounts:
+        - mountPath: /usr/share/graylog/data/journal
+          name: graylog-persistent-storage
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext: {}
+      terminationGracePeriodSeconds: 70
+      volumes:
+        - emptyDir:
+            medium: ""
+          name: graylog-persistent-storage
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: graylog
+  name: graylog
+spec:
+  ports:
+  - name: "80"
+    port: 80
+    targetPort: 9000
+    nodePort: 31050
+  - name: "443"
+    port: 443
+    targetPort: 9000
+  - name: "514"
+    port: 514
+    targetPort: 514
+  - name: 514-udp
+    port: 514
+    protocol: UDP
+    targetPort: 514
+  - name: "12201"
+    port: 12201
+    targetPort: 12201
+  - name: 12201-udp
+    port: 12201
+    protocol: UDP
+    targetPort: 12201
+  selector:
+    app: graylog
+  type: NodePort
