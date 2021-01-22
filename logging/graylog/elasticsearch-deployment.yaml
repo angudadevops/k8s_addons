@@ -90,7 +90,7 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: elasticsearch
+  name: graylog-elasticsearch
   labels:
     app: elasticsearch
 spec:

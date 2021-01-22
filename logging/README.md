@@ -5,32 +5,42 @@
 
 Here Two ways to deploy logging for Kubernetes 
 
-1. Deploy Logging stack end to end with one yaml. Please run the below command to install EFK stack 
+1. [Kubernetes Logging with Graylog](https://github.com/angudadevops/k8s_addons/tree/master/logging/graylog)
 
-Please make sure to have at least 2 CPU for this setup
+2. Kubernetes logging with EFK/ELK
 
-Below yaml helps you to setup fluent-bit, Kibana, Elasticsearch stack. 
-```
-kubectl apply -f k8s-logging.yaml
-``` 
+- a. Deploy Logging stack end to end with one yaml. Please run the below command to install EFK stack 
 
-2. Deploy each componenet individually to understand how each component has been setup.
+   Please make sure to have at least 2 CPU for this setup
+ 
+   Below yaml helps you to setup fluent-bit, Kibana, Elasticsearch stack. 
+   ```
+   kubectl apply -f k8s-logging.yaml
+   ``` 
 
-Please make sure to have at least 4 CPU for this Setup
+- b. Deploy each componenet individually to understand how each component has been setup.
 
-Example:
-```
-kubectl apply -f prod-logging.yaml
-```
+  Please make sure to have at least 4 CPU for this Setup
 
-To delte the logging components 
-```
-kubectl delete ns logging
-```
+  Example:
+  ```
+  kubectl apply -f prod-logging.yaml
+  ```
 
-Access Kibana with nodePort as 31113 like below 
+  To delte the logging components 
+  ```
+  kubectl delete ns logging
+  ```
 
-```
-Example: 
- http://10.104.67.161:31113
-```
+  Access Kibana with nodePort as 31113 like below 
+
+  ```
+  Example: 
+   http://10.104.67.161:31113
+  ```
+
+  3. Please run the below command to install ELK stack
+
+  ```
+  kubectl apply -f logstash.yaml
+  ```
