@@ -1,9 +1,8 @@
-#### Logging for K8's
+# Logging for Kubernetes
 
-- For logs storage, used emptyDir as a storage. it's recommend to store as persistence volume
-- Here kibana exposed as NodePort, that way you can access your kibana with nodeIP and NodePort as 31113
+`NOTE:` For logs storage, used emptyDir as a storage. it's recommend to store as persistence volume
 
-Run below playbook to install Fluent-Bit, ElasticSearch, LogStash, Graylog
+Run below playbook to install Fluent-Bit, ElasticSearch, LogStash, Graylog, Kibana
 
 ```
 kubectl apply -f logging-all-in-one.yaml
@@ -17,7 +16,7 @@ kubectl apply -f logging-all-in-one.yaml
 If you want to explore individual stack, please go through below steps 
 
 
-1. [Kubernetes Logging with Graylog](https://github.com/angudadevops/k8s_addons/tree/master/logging/graylog)
+## [Kubernetes Logging with Graylog](https://github.com/angudadevops/k8s_addons/tree/master/logging/graylog)
 
 Deploy Logging stack end to end with one yaml. Please run the below command to install Graylog stack
 
@@ -29,7 +28,7 @@ Deploy Logging stack end to end with one yaml. Please run the below command to i
    ```
 
 
-2. [Logging with ELK on Kubernetes](https://github.com/angudadevops/k8s_addons/tree/master/logging/ELK)
+## [Logging with ELK on Kubernetes](https://github.com/angudadevops/k8s_addons/tree/master/logging/ELK)
 
 Kubernetes logging with EFK
 
@@ -41,7 +40,8 @@ Deploy Logging stack end to end with one yaml. Please run the below command to i
    ```
    kubectl apply -f EFK/*
    ``` 
-2. [EFK logging on Kuberenetes](https://github.com/angudadevops/k8s_addons/tree/master/logging/EFK)
+
+## [EFK logging on Kuberenetes](https://github.com/angudadevops/k8s_addons/tree/master/logging/EFK)
 
 Deploy Logging stack end to end with one yaml. Please run the below command to install ELK stack
 
@@ -51,6 +51,7 @@ Deploy Logging stack end to end with one yaml. Please run the below command to i
    ```
    kubectl apply -f ELK/*
    ```
+
 ## Cleanup
 
 To delte the logging components, run the below command
