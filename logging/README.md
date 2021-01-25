@@ -28,7 +28,7 @@ Deploy Logging stack end to end with one yaml. Please run the below command to i
    ```
 
 
-## [Logging with ELK on Kubernetes](https://github.com/angudadevops/k8s_addons/tree/master/logging/ELK)
+## [Logging with EFK on Kubernetes](https://github.com/angudadevops/k8s_addons/tree/master/logging/EFK)
 
 Kubernetes logging with EFK
 
@@ -41,7 +41,7 @@ Deploy Logging stack end to end with one yaml. Please run the below command to i
    kubectl apply -f EFK/*
    ``` 
 
-## [EFK logging on Kuberenetes](https://github.com/angudadevops/k8s_addons/tree/master/logging/EFK)
+## [ELK logging on Kuberenetes](https://github.com/angudadevops/k8s_addons/tree/master/logging/ELK)
 
 Deploy Logging stack end to end with one yaml. Please run the below command to install ELK stack
 
