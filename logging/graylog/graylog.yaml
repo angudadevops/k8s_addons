@@ -1,11 +1,13 @@
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   labels:
     app: graylog
   name: graylog
+  namespace: logging
 spec:
   replicas: 1
+  serviceName: graylog
   selector:
     matchLabels:
       app: graylog
@@ -34,6 +36,12 @@ spec:
           value: -Xms1g -Xmx1g -XX:NewRatio=1 -XX:MaxMetaspaceSize=256m -server -XX:+ResizeTLAB
             -XX:+UseConcMarkSweepGC -XX:+CMSConcurrentMTEnabled -XX:+CMSClassUnloadingEnabled
             -XX:+UseParNewGC -XX:-OmitStackTraceInFastThrow
+        - name: HOSTIP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.hostIP
+        - name: GRAYLOG_HTTP_EXTERNAL_URI
+          value: "http://$(HOSTIP):31050/"
         image: graylog/graylog:4.0
         imagePullPolicy: IfNotPresent
         name: graylog-master
@@ -111,6 +119,7 @@ metadata:
   labels:
     app: graylog
   name: graylog
+  namespace: logging
 spec:
   ports:
   - name: "80"

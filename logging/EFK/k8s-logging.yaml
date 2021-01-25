@@ -1,13 +1,13 @@
 kind: Namespace
 apiVersion: v1
 metadata:
-  name: logging
+  name: efk
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: fluent-bit-config
-  namespace: logging
+  namespace: efk
   labels:
     k8s-app: fluent-bit
 data:
@@ -25,6 +25,7 @@ data:
     @INCLUDE input-kubernetes.conf
     @INCLUDE filter-kubernetes.conf
     @INCLUDE output-elasticsearch.conf
+    @INCLUDE output-graylog.conf
   input-kubernetes.conf: |
     [INPUT]
         Name              tail
@@ -55,8 +56,8 @@ data:
         Port            ${FLUENT_ELASTICSEARCH_PORT}
         Replace_Dots    On
         Retry_Limit     False
-        Index           fluentd
-        Logstash_DateFormat %Y.%m.%d
+        Logstash_Format True
+        Logstash_Prefix fluent-bit
   parsers.conf: |
     [PARSER]
         Name   apache
@@ -109,7 +110,7 @@ roleRef:
 subjects:
 - kind: ServiceAccount
   name: fluent-bit
-  namespace: logging
+  namespace: efk
 ---
 apiVersion: rbac.authorization.k8s.io/v1beta1
 kind: ClusterRole
@@ -126,13 +127,13 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: fluent-bit
-  namespace: logging
+  namespace: efk
 ---
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
   name: fluent-bit
-  namespace: logging
+  namespace: efk
   labels:
     component: fluent-bit-logging
     version: v1
@@ -185,7 +186,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: elasticsearch
-  namespace: logging
+  namespace: efk
   labels:
     app: elasticsearch
     k8s-app: elasticsearch-logging
@@ -206,7 +207,7 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: elasticsearch
-  namespace: logging
+  namespace: efk
   labels:
     k8s-app: elasticsearch-logging
     addonmanager.kubernetes.io/mode: Reconcile
@@ -215,6 +216,7 @@ kind: ClusterRole
 apiVersion: rbac.authorization.k8s.io/v1
 metadata:
   name: elasticsearch-logging
+  namespace: efk
   labels:
     k8s-app: elasticsearch-logging
     addonmanager.kubernetes.io/mode: Reconcile
@@ -232,14 +234,14 @@ kind: ClusterRoleBinding
 apiVersion: rbac.authorization.k8s.io/v1
 metadata:
   name: elasticsearch
-  namespace: logging
+  namespace: efk
   labels:
     k8s-app: elasticsearch-logging
     addonmanager.kubernetes.io/mode: Reconcile
 subjects:
 - kind: ServiceAccount
   name: elasticsearch
-  namespace: logging
+  namespace: efk
   apiGroup: ""
 roleRef:
   kind: ClusterRole
@@ -250,7 +252,7 @@ apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: elasticsearch
-  namespace: logging
+  namespace: efk
   labels:
     k8s-app: elasticsearch-logging
     version: v7.4.2
@@ -270,7 +272,7 @@ spec:
       serviceAccountName: elasticsearch
       containers:
       - name: elasticsearch
-        image: docker.elastic.co/elasticsearch/elasticsearch:7.7.1
+        image: docker.elastic.co/elasticsearch/elasticsearch:7.10.0
         imagePullPolicy: Always
         securityContext:
           capabilities:
@@ -331,13 +333,13 @@ apiVersion: v1
 kind: Service
 metadata:
   name: kibana
-  namespace: logging
+  namespace: efk
   labels:
     app: kibana
 spec:
   ports:
   - port: 5601
-    nodePort: 31120
+    nodePort: 31121
   selector:
     app: kibana
   type: NodePort
@@ -346,7 +348,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: kibana
-  namespace: logging
+  namespace: efk
   labels:
     app: kibana
 spec:
@@ -363,7 +365,7 @@ spec:
     spec:
       containers:
       - name: kibana
-        image: docker.elastic.co/kibana/kibana:7.7.1
+        image: docker.elastic.co/kibana/kibana:7.10.0
         imagePullPolicy: Always
         resources:
           limits:

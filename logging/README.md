@@ -3,6 +3,11 @@
 - For logs storage, here i used to store as emptyDir, it's recommend to store as persistence volume
 - Here kibana exposed as NodePort, that way you can access your kibana with nodeIP and NodePort as 31113
 
+`logging-all-in-one.yaml` represents below archtechture 
+
+![logging-arch](./Logging-Arch.png)
+
+
 Here Two ways to deploy logging for Kubernetes 
 
 1. [Kubernetes Logging with Graylog](https://github.com/angudadevops/k8s_addons/tree/master/logging/graylog)

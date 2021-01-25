@@ -1,20 +1,22 @@
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   labels:
-    app: elasticsearch
+    app: graylog-elasticsearch
     component: elasticsearch
-  name: elasticsearch
+  name: graylog-elasticsearch
+  namespace: logging
 spec:
   replicas: 1
+  serviceName: graylog-elasticsearch
   selector:
     matchLabels:
-      app: elasticsearch
+      app: graylog-elasticsearch
       component: elasticsearch
   template:
     metadata:
       labels:
-        app: elasticsearch
+        app: graylog-elasticsearch
         component: elasticsearch
     spec:
       containers:
@@ -33,7 +35,7 @@ spec:
           value: localhost
         image: docker.elastic.co/elasticsearch/elasticsearch-oss:7.10.0
         imagePullPolicy: IfNotPresent
-        name: elasticsearch
+        name: graylog-elasticsearch
         ports:
         - containerPort: 9200
           name: http
@@ -91,12 +93,13 @@ apiVersion: v1
 kind: Service
 metadata:
   name: graylog-elasticsearch
+  namespace: logging
   labels:
-    app: elasticsearch
+    app: graylog-elasticsearch
 spec:
   ports:
-  - name: elasticsearch
+  - name: graylog-elasticsearch
     port: 9200
     targetPort: 9200
   selector:
-    app: elasticsearch
+    app: graylog-elasticsearch

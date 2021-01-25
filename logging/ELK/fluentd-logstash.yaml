@@ -50,7 +50,7 @@ data:
 
     @INCLUDE input-kubernetes.conf
     @INCLUDE filter-kubernetes.conf
-    @INCLUDE output-graylog.conf
+    @INCLUDE output-logstash.conf
 
   input-kubernetes.conf: |
     [INPUT]
@@ -86,15 +86,13 @@ data:
         Match *
         Remove_key annotations
         Remove_key labels
-
-  output-graylog.conf: |
+  output-logstash.conf: |
     [OUTPUT]
-        Name          gelf
+        Name          http
         Match         *
-        Host          ${FLUENT_GRAYLOG_HOST}
-        Port          ${FLUENT_GRAYLOG_PORT}
-        Mode          tcp
-        Gelf_Short_Message_Key log
+        Host          ${FLUENT_LOGSTASH_HOST}
+        Port          ${FLUENT_LOGSTASH_PORT}
+        Format        json
 
   parsers.conf: |
     [PARSER]
@@ -149,10 +147,10 @@ spec:
       - name: fluent-bit
         image: fluent/fluent-bit
         env:
-        - name: FLUENT_GRAYLOG_HOST
-          value: "graylog"
-        - name: FLUENT_GRAYLOG_PORT
-          value: "12201"
+        - name: FLUENT_LOGSTASH_HOST
+          value: "logstash"
+        - name: FLUENT_LOGSTASH_PORT
+          value: "8080"
         ports:
           - containerPort: 2020
         volumeMounts:
