@@ -1,0 +1,62 @@
+kind: Namespace
+apiVersion: v1
+metadata:
+  name: logging
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mongo
+  namespace: logging
+spec:
+  selector:
+    matchLabels:
+      role: mongo
+      environment: test
+  serviceName: "mongo"
+  replicas: 3
+  template:
+    metadata:
+      labels:
+        role: mongo
+        environment: test
+    spec:
+      terminationGracePeriodSeconds: 10
+      containers:
+      - name: mongo
+        image: mongo
+        env:
+        - name: MY_POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        command: 
+        - "mongod"
+        - "--replSet"
+        - rs0 
+        - "--bind_ip"
+        - 0.0.0.0
+        ports:
+          - containerPort: 27017
+        volumeMounts:
+          - name: mongo-persistent-storage
+            mountPath: /data/db
+      volumes:
+        - emptyDir:
+            medium: ""
+          name: mongo-persistent-storage
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongo
+  namespace: logging
+  labels:
+    name: mongo
+spec:
+  ports:
+    - port: 27017
+      targetPort: 27017
+  clusterIP: None
+  selector:
+    role: mongo

@@ -1,0 +1,857 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: elasticsearch
+  namespace: logging
+  labels:
+    app: elasticsearch
+    k8s-app: elasticsearch-logging
+    kubernetes.io/cluster-service: "true"
+    addonmanager.kubernetes.io/mode: Reconcile
+    kubernetes.io/name: "Elasticsearch"
+spec:
+  selector:
+    app: elasticsearch
+  ports:
+    - port: 9200
+      protocol: TCP
+      name: db
+    - port: 9300
+      name: inter-node
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: elasticsearch
+  namespace: logging
+  labels:
+    k8s-app: elasticsearch-logging
+    addonmanager.kubernetes.io/mode: Reconcile
+---
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: elasticsearch-logging
+  namespace: logging
+  labels:
+    k8s-app: elasticsearch-logging
+    addonmanager.kubernetes.io/mode: Reconcile
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - "services"
+  - "namespaces"
+  - "endpoints"
+  verbs:
+  - "get"
+---
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: elasticsearch
+  labels:
+    k8s-app: elasticsearch-logging
+    addonmanager.kubernetes.io/mode: Reconcile
+subjects:
+- kind: ServiceAccount
+  name: elasticsearch
+  namespace: logging
+  apiGroup: ""
+roleRef:
+  kind: ClusterRole
+  name: elasticsearch-logging
+  apiGroup: ""
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: elasticsearch
+  namespace: logging
+  labels:
+    k8s-app: elasticsearch-logging
+    version: v7.4.2
+    addonmanager.kubernetes.io/mode: Reconcile
+spec:
+  serviceName: elasticsearch
+  podManagementPolicy: Parallel
+  replicas: 3
+  selector:
+    matchLabels:
+      app: elasticsearch
+  template:
+    metadata:
+      labels:
+        app: elasticsearch
+        k8s-app: elasticsearch-logging
+    spec:
+      serviceAccountName: elasticsearch
+      containers:
+      - name: elasticsearch
+        image: docker.elastic.co/elasticsearch/elasticsearch:7.10.0
+        imagePullPolicy: Always
+        securityContext:
+          capabilities:
+            add: ["SYS_CHROOT"]
+        resources:
+            limits:
+              cpu: 1000m
+              memory: 3Gi
+            requests:
+              cpu: 100m
+              memory: 3Gi
+        ports:
+        - containerPort: 9200
+          name: db
+          protocol: TCP
+        - containerPort: 9300
+          name: transport
+          protocol: TCP
+        livenessProbe:
+          tcpSocket:
+            port: transport
+          initialDelaySeconds: 5
+          timeoutSeconds: 10
+        readinessProbe:
+          tcpSocket:
+            port: transport
+          initialDelaySeconds: 5
+          timeoutSeconds: 10
+        volumeMounts:
+        - name: elasticsearch-data
+          mountPath: /usr/share/elasticsearch/data
+        env:
+          - name: "NAMESPACE"
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.name
+          - name: cluster.name
+            value: kubernetes-logging
+            # - name: ES_JAVA_OPTS
+            #   value: "-Xms512m -Xmx512m"
+          - name: bootstrap.memory_lock
+            value: "false"
+          - name: ES_JAVA_OPTS
+            value: -Xms512m -Xmx512m
+          - name: http.host
+            value: 0.0.0.0
+          - name: network.host
+            value: 0.0.0.0
+          - name: discovery.seed_hosts
+            value: "elasticsearch.logging"
+          - name: cluster.initial_master_nodes
+            value: "elasticsearch-0, elasticsearch-1, elasticsearch-2"
+      volumes:
+          - emptyDir:
+              medium: ""
+            name: elasticsearch-data
+      initContainers:
+      - name: increase-vm-max-map
+        image: registry.opensuse.org/opensuse/busybox:latest
+        imagePullPolicy: Always
+        command: ["sysctl", "-w", "vm.max_map_count=262144"]
+        securityContext:
+          privileged: true
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kibana-config
+  namespace: logging
+  labels:
+    app: kibana
+data:
+  kibana.yml: |
+    server.name: kibana
+    server.host: "0"
+    elasticsearch.hosts: [ "http://elasticsearch:9200" ]
+    monitoring.ui.container.elasticsearch.enabled: true
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fluent-bit-config
+  namespace: logging
+  labels:
+    k8s-app: fluent-bit
+data:
+  # Configuration files: server, input, filters and output
+  # ======================================================
+  fluent-bit.conf: |
+    [SERVICE]
+        Flush         1
+        Log_Level     info
+        Daemon        off
+        Parsers_File  parsers.conf
+        HTTP_Server   On
+        HTTP_Listen   0.0.0.0
+        HTTP_Port     2020
+    @INCLUDE input-kubernetes.conf
+    @INCLUDE filter-kubernetes.conf
+    @INCLUDE output-elasticsearch.conf
+    @INCLUDE output-graylog.conf
+    @INCLUDE output-logstash.conf
+  input-kubernetes.conf: |
+    [INPUT]
+        Name              tail
+        Tag               kube.*
+        Path              /var/log/containers/*.log
+        Parser            docker
+        DB                /var/log/flb_kube.db
+        Mem_Buf_Limit     5MB
+        Skip_Long_Lines   On
+        Refresh_Interval  10
+  filter-kubernetes.conf: |
+    [FILTER]
+        Name                kubernetes
+        Match               kube.*
+        Kube_URL            https://kubernetes.default.svc:443
+        Kube_CA_File        /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        Kube_Token_File     /var/run/secrets/kubernetes.io/serviceaccount/token
+        Kube_Tag_Prefix     kube.var.log.containers.
+        Merge_Log           On
+        Merge_Log_Key       log_processed
+        K8S-Logging.Parser  On
+        K8S-Logging.Exclude Off
+
+    # ${HOSTNAME} returns the host name.
+    # But Fluentbit runs in a container. So, it is not meaningful.
+    # Instead, copy the host name from the Kubernetes object.
+    [FILTER]
+        Name nest
+        Match *
+        Operation lift
+        Nested_under kubernetes
+    # Remove offending fields, see: https://github.com/fluent/fluent-bit/issues/1291
+    [FILTER]
+        Name record_modifier
+        Match *
+        Remove_key annotations
+        Remove_key labels
+  output-elasticsearch.conf: |
+    [OUTPUT]
+        Name            es
+        Match           *
+        Host            ${FLUENT_ELASTICSEARCH_HOST}
+        Port            ${FLUENT_ELASTICSEARCH_PORT}
+        Replace_Dots    On
+        Retry_Limit     False
+        Logstash_Format True
+        Logstash_Prefix fluentd
+  output-graylog.conf: |
+    [OUTPUT]
+        Name          gelf
+        Match         *
+        Host          ${FLUENT_GRAYLOG_HOST}
+        Port          ${FLUENT_GRAYLOG_PORT}
+        Mode          tcp
+        Gelf_Short_Message_Key log
+  output-logstash.conf: |
+    [OUTPUT]
+        Name          http
+        Match         *
+        Host          ${FLUENT_LOGSTASH_HOST}
+        Port          ${FLUENT_LOGSTASH_PORT}
+        Format        json
+  parsers.conf: |
+    [PARSER]
+        Name   json
+        Format json
+        Time_Key time
+        Time_Format %d/%b/%Y:%H:%M:%S %z
+    [PARSER]
+        Name        docker
+        Format      json
+        Time_Key    time
+        Time_Format %Y-%m-%dT%H:%M:%S.%L
+        Time_Keep   On
+        Decode_Field_As   escaped    log
+    [PARSER]
+        Name        syslog
+        Format      regex
+        Regex       ^\<(?<pri>[0-9]+)\>(?<time>[^ ]* {1,2}[^ ]* [^ ]*) (?<host>[^ ]*) (?<ident>[a-zA-Z0-9_\/\.\-]*)(?:\[(?<pid>[0-9]+)\])?(?:[^\:]*\:)? *(?<message>.*)$
+        Time_Key    time
+        Time_Format %b %d %H:%M:%S
+---
+apiVersion: rbac.authorization.k8s.io/v1beta1
+kind: ClusterRoleBinding
+metadata:
+  name: fluent-bit-read
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: fluent-bit-read
+subjects:
+- kind: ServiceAccount
+  name: fluent-bit
+  namespace: logging
+---
+apiVersion: rbac.authorization.k8s.io/v1beta1
+kind: ClusterRole
+metadata:
+  name: fluent-bit-read
+rules:
+- apiGroups: [""]
+  resources:
+  - namespaces
+  - pods
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: fluent-bit
+  namespace: logging
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: fluent-bit
+  namespace: logging
+  labels:
+    component: fluent-bit-logging
+    version: v1
+    kubernetes.io/cluster-service: "true"
+spec:
+  selector:
+    matchLabels:
+      component: fluent-bit-logging
+  template:
+    metadata:
+      labels:
+        component: fluent-bit-logging
+        version: v1
+        kubernetes.io/cluster-service: "true"
+    spec:
+      containers:
+      - name: fluent-bit
+        image: fluent/fluent-bit
+        env:
+        - name: FLUENT_ELASTICSEARCH_HOST
+          value: "elasticsearch" # the name of the previous es-svc.yml
+        - name: FLUENT_ELASTICSEARCH_PORT
+          value: "9200" # the port of the previous es-svc.yml
+        - name: FLUENT_GRAYLOG_HOST
+          value: "graylog"
+        - name: FLUENT_GRAYLOG_PORT
+          value: "12201"
+        - name: FLUENT_LOGSTASH_HOST
+          value: "logstash"
+        - name: FLUENT_LOGSTASH_PORT
+          value: "8080"
+        volumeMounts:
+        - name: varlog
+          mountPath: /var/log
+        - name: varlibdockercontainers
+          mountPath: /var/lib/docker/containers
+          readOnly: true
+        - name: fluent-bit-config
+          mountPath: /fluent-bit/etc/
+      terminationGracePeriodSeconds: 10
+      volumes:
+      - name: varlog
+        hostPath:
+          path: /var/log
+      - name: varlibdockercontainers
+        hostPath:
+          path: /var/lib/docker/containers
+      - name: fluent-bit-config
+        configMap:
+          name: fluent-bit-config # name of the previously created ConfigMap
+      serviceAccountName: fluent-bit
+      tolerations:
+      - key: node-role.kubernetes.io/master
+        operator: Exists
+        effect: NoSchedule
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: logstash-configmap
+  namespace: logging
+data:
+  logstash.yml: |
+    http.host: "0.0.0.0"
+    path.config: /usr/share/logstash/pipeline
+  logstash.conf: |
+    # all input will come from filebeat, no local logs
+    input {
+      http {
+        port => 8080
+      }
+    }
+    filter {
+      mutate {
+         remove_field => [ "[headers][content_length]", "[headers][content_type]", "[headers][http_accept]", "[headers][http_version]", "[headers][request_method]", "[headers][request_path]" ]
+      }
+
+    }
+    output {
+      elasticsearch {
+        index => "logstash-fluentbit-%{+YYYY.MM.dd}"
+        hosts => [ "${ES_HOSTS}" ]
+      }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: logstash
+  name: logstash
+  namespace: logging
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: logstash
+  template:
+    metadata:
+      labels:
+        app: logstash
+    spec:
+      containers:
+      - image: docker.elastic.co/logstash/logstash:7.10.0
+        name: logstash
+        ports:
+        - containerPort: 25826
+        - containerPort: 5044
+        - containerPort: 8080
+        env:
+        - name: ES_HOSTS
+          value: "elasticsearch:9200"
+        resources: {}
+        volumeMounts:
+        - name: logstash-pipeline-volume
+          mountPath: /usr/share/logstash/pipeline
+      volumes:
+      - name: logstash-pipeline-volume
+        configMap:
+          name: logstash-configmap
+          items:
+          - key: logstash.conf
+            path: logstash.conf
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: logstash
+  name: logstash
+  namespace: logging
+spec:
+  ports:
+  - name: "25826"
+    port: 25826
+    targetPort: 25826
+  - name: "5044"
+    port: 5044
+    targetPort: 5044
+  - name: "8080"
+    port: 8080
+    targetPort: 8080
+  selector:
+    app: logstash
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: filebeat-logstash-config
+  namespace: logging
+  labels:
+    app: filebeat-logstash
+data:
+  filebeat.yml: |-
+    filebeat.autodiscover:
+      providers:
+        - type: kubernetes
+          node: ${NODE_NAME}
+          hints.enabled: true
+          hints.default_config:
+            type: container
+            paths:
+              - /var/log/containers/*${data.kubernetes.container.id}.log
+    processors:
+      - add_cloud_metadata:
+      - add_host_metadata:
+
+    output.logstash:
+      hosts: '${LOGSTASH_URL}'
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kibana
+  namespace: logging
+  labels:
+    app: kibana
+spec:
+  ports:
+  - port: 5601
+    nodePort: 31120
+  selector:
+    app: kibana
+  type: NodePort
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kibana
+  namespace: logging
+  labels:
+    app: kibana
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kibana
+  strategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: kibana
+    spec:
+      containers:
+      - name: kibana
+        image: docker.elastic.co/kibana/kibana:7.10.0
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 5601
+        resources:
+          limits:
+            cpu: 1000m
+          requests:
+            cpu: 100m
+        volumeMounts:
+        - name: kibana-conf
+          mountPath: /usr/share/kibana/config/kibana.yml
+          subPath: kibana.yml
+      volumes:
+      - name: kibana-conf
+        configMap:
+          name: kibana-config 
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  labels:
+    app: graylog-master
+  name: graylog-master
+  namespace: logging
+spec:
+  replicas: 1
+  serviceName: graylog
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app: graylog-master
+  template:
+    metadata:
+      labels:
+        app: graylog-master
+    spec:
+      containers:
+      - env:
+        - name: GRAYLOG_ROOT_PASSWORD_SHA2
+          value: "8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918"
+        - name: GRAYLOG_ELASTICSEARCH_HOSTS
+          value: "http://elasticsearch:9200/"
+        - name: GRAYLOG_MONGODB_URI
+          value: "mongodb://mongo-0.mongo.logging.svc.cluster.local:27017,mongo-1.mongo.logging.svc.cluster.local:27017,mongo-2.mongo.logging.svc.cluster.local:27017/admin?replicaSet=rs0"
+        - name: GRAYLOG_ELASTICSEARCH_DISCOVERY_ENABLED
+          value: "true"
+        - name: GRAYLOG_IS_MASTER
+          value: "true"
+        - name: GRAYLOG_HTTP_BIND_ADDRESS
+          value: "0.0.0.0:9000"
+        - name: GRAYLOG_SERVER_JAVA_OPTS
+          value: -Xms1g -Xmx1g -XX:NewRatio=1 -XX:MaxMetaspaceSize=256m -server -XX:+ResizeTLAB
+            -XX:+UseConcMarkSweepGC -XX:+CMSConcurrentMTEnabled -XX:+CMSClassUnloadingEnabled
+            -XX:+UseParNewGC -XX:-OmitStackTraceInFastThrow
+        - name: HOSTIP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.hostIP
+        - name: GRAYLOG_HTTP_EXTERNAL_URI
+          value: "http://$(HOSTIP):31050/"
+        - name: GRAYLOG_WEB_LISTEN_URI
+          value: "http://0.0.0.0:9000"
+        - name: GRAYLOG_REST_LISTEN_URI
+          value: "http://0.0.0.0:9000/api" 
+        image: graylog/graylog:4.0
+        imagePullPolicy: IfNotPresent
+        name: graylog-master
+        ports:
+        - containerPort: 9000
+          name: http
+          protocol: TCP
+        - containerPort: 12201
+          name: udp-input
+          protocol: TCP
+        - containerPort: 1514
+          name: tcp-input
+          protocol: TCP
+        readinessProbe:
+          failureThreshold: 4
+          httpGet:
+            path: /api/system/lbstatus
+            port: 9000
+            scheme: HTTP
+          initialDelaySeconds: 120
+          periodSeconds: 3
+          successThreshold: 1
+          timeoutSeconds: 3
+        # resources:
+        #   limits:
+        #     cpu: 15m
+        #     memory: 32Mi
+        #   requests:
+        #     cpu: 10Mi
+        #     memory: 64Mi
+        securityContext:
+          privileged: true
+          runAsUser: 1100
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+        volumeMounts:
+        - mountPath: /usr/share/graylog/data/journal
+          name: graylog-persistent-storage
+          subPath: graylog
+      dnsPolicy: ClusterFirst
+      initContainers:
+      - command:
+        - sh
+        - -c
+        - chown -R 1100:1100 /usr/share/graylog/data/journal
+        - chmod 777 /usr/share/graylog/data/journal/graylog2-committed-read-offset
+        - chmod g+rwx /usr/share/graylog/data/journal/graylog2-committed-read-offset
+        - chgrp 1100 /usr/share/graylog/data/journal/graylog2-committed-read-offset
+        - chown -R 1100:1100 ./graylog_journal
+        - chown -R 1100:1100 /usr/share/graylog/data/journal
+        - chown -R 1100:1100 /usr/share/graylog/data/journal/graylog2-committed-read-offset
+        image: busybox:1.29.2
+        imagePullPolicy: IfNotPresent
+        name: set-dir-owner
+        resources: {}
+        securityContext:
+          privileged: true
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+        volumeMounts:
+        - mountPath: /usr/share/graylog/data/journal
+          name: graylog-persistent-storage
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext: {}
+      terminationGracePeriodSeconds: 70
+      volumes:
+        - emptyDir:
+            medium: ""
+          name: graylog-persistent-storage
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: graylog-master
+  name: graylog
+  namespace: logging
+spec:
+  ports:
+  - name: "80"
+    port: 80
+    targetPort: 9000
+    nodePort: 31050
+  - name: "443"
+    port: 443
+    targetPort: 9000
+  - name: "514"
+    port: 514
+    targetPort: 514
+  - name: 514-udp
+    port: 514
+    protocol: UDP
+    targetPort: 514
+  - name: "12201"
+    port: 12201
+    targetPort: 12201
+  - name: 12201-udp
+    port: 12201
+    protocol: UDP
+    targetPort: 12201
+  selector:
+    app: graylog-master
+  type: NodePort
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  labels:
+    app: graylog-slave
+  name: graylog-slave
+  namespace: logging
+spec:
+  replicas: 2
+  serviceName: graylog-slave
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app: graylog-slave
+  template:
+    metadata:
+      labels:
+        app: graylog-slave
+    spec:
+      containers:
+      - env:
+        - name: GRAYLOG_ELASTICSEARCH_HOSTS
+          value: "http://elasticsearch:9200/"
+        - name: GRAYLOG_MONGODB_URI
+          value: "mongodb://mongo-0.mongo.logging.svc.cluster.local:27017,mongo-1.mongo.logging.svc.cluster.local:27017,mongo-2.mongo.logging.svc.cluster.local:27017/admin?replicaSet=rs0"
+        - name: GRAYLOG_ROOT_PASSWORD_SHA2
+          value: "8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918"
+        - name: GRAYLOG_IS_MASTER
+          value: "false"
+        - name: GRAYLOG_HTTP_BIND_ADDRESS
+          value: 0.0.0.0:9000
+        - name: GRAYLOG_SERVER_JAVA_OPTS
+          value: -Xms1g -Xmx1g -XX:NewRatio=1 -XX:MaxMetaspaceSize=256m -server -XX:+ResizeTLAB
+            -XX:+UseConcMarkSweepGC -XX:+CMSConcurrentMTEnabled -XX:+CMSClassUnloadingEnabled
+            -XX:+UseParNewGC -XX:-OmitStackTraceInFastThrow
+        - name: HOSTIP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.hostIP
+        - name: GRAYLOG_HTTP_EXTERNAL_URI
+          value: "http://$(HOSTIP):31050/"
+        - name: GRAYLOG_WEB_LISTEN_URI
+          value: "http://0.0.0.0:9000/"
+        - name: GRAYLOG_REST_LISTEN_URI
+          value: "http://0.0.0.0:9000/api"
+        image: graylog/graylog:4.0
+        imagePullPolicy: IfNotPresent
+        name: graylog-slave
+        ports:
+        - containerPort: 9000
+          name: http
+          protocol: TCP
+        - containerPort: 12201
+          name: udp-input
+          protocol: TCP
+        - containerPort: 1514
+          name: tcp-input
+          protocol: TCP
+        readinessProbe:
+          failureThreshold: 4
+          httpGet:
+            path: /api/system/lbstatus
+            port: 9000
+            scheme: HTTP
+          initialDelaySeconds: 120
+          periodSeconds: 3
+          successThreshold: 1
+          timeoutSeconds: 3
+        # resources:
+        #   limits:
+        #     cpu: 15m
+        #     memory: 32Mi
+        #   requests:
+        #     cpu: 10Mi
+        #     memory: 64Mi
+        securityContext:
+          privileged: true
+          runAsUser: 1100
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+        volumeMounts:
+        - mountPath: /usr/share/graylog/data/journal
+          name: graylog-persistent-storage
+          subPath: graylog
+      dnsPolicy: ClusterFirst
+      initContainers:
+      - command:
+        - sh
+        - -c
+        - chown -R 1100:1100 /usr/share/graylog/data/journal
+        - chmod 777 /usr/share/graylog/data/journal/graylog2-committed-read-offset
+        - chmod g+rwx /usr/share/graylog/data/journal/graylog2-committed-read-offset
+        - chgrp 1100 /usr/share/graylog/data/journal/graylog2-committed-read-offset
+        - chown -R 1100:1100 ./graylog_journal
+        - chown -R 1100:1100 /usr/share/graylog/data/journal
+        - chown -R 1100:1100 /usr/share/graylog/data/journal/graylog2-committed-read-offset
+        image: busybox:1.29.2
+        imagePullPolicy: IfNotPresent
+        name: set-dir-owner
+        resources: {}
+        securityContext:
+          privileged: true
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+        volumeMounts:
+        - mountPath: /usr/share/graylog/data/journal
+          name: graylog-persistent-storage
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext: {}
+      terminationGracePeriodSeconds: 70
+      volumes:
+        - emptyDir:
+            medium: ""
+          name: graylog-persistent-storage
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: graylog-slave
+  name: graylog-slave
+  namespace: logging
+spec:
+  ports:
+  - name: "80"
+    port: 80
+    targetPort: 9000
+    nodePort: 31051
+  - name: "443"
+    port: 443
+    targetPort: 9000
+  - name: "514"
+    port: 514
+    targetPort: 514
+  - name: 514-udp
+    port: 514
+    protocol: UDP
+    targetPort: 514
+  - name: "12201"
+    port: 12201
+    targetPort: 12201
+  - name: 12201-udp
+    port: 12201
+    protocol: UDP
+    targetPort: 12201
+  selector:
+    app: graylog-slave
+  type: NodePort
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mongodb-config
+  namespace: logging
+  labels:
+    app: mongodb
+data:
+  mongod.conf: |
+    replication:
+       replSetName: "rs01"
+    net:
+       port: 27017
+       bindIp: 0.0.0.0
+    storage:
+      dbPath: /data/db
+      journal:
+        enabled: true
+    processManagement:
+      timeZoneInfo: /usr/share/zoneinfo
+---
