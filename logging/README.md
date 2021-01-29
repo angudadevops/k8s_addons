@@ -5,6 +5,7 @@
 Run below playbook to install Fluent-Bit, ElasticSearch, LogStash, Graylog, Kibana
 
 ## Dev Logging
+
 ```
 kubectl apply -f logging-all-in-one.yaml
 ```
@@ -15,6 +16,12 @@ kubectl apply -f logging-all-in-one.yaml
 
 
 ## Prod Logging
+
+### [Motivation](https://docs.graylog.org/en/4.0/pages/architecture.html#bigger-production-setup)
+
+```
+kubectl apply -f prod-logging.yaml
+```
 
 `prod-logging.yaml` represents below architecture 
 
