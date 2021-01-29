@@ -1,3 +1,107 @@
+kind: Namespace
+apiVersion: v1
+metadata:
+  name: logging
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mongo
+  namespace: logging
+spec:
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      role: mongo
+      environment: test
+  serviceName: "mongo"
+  replicas: 3
+  template:
+    metadata:
+      labels:
+        role: mongo
+        environment: test
+    spec:
+      terminationGracePeriodSeconds: 10
+      containers:
+      - name: mongo
+        image: mongo
+        env:
+        - name: MY_POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        command:
+        - "mongod"
+        - "--replSet"
+        - rs0
+        - "--bind_ip"
+        - 0.0.0.0
+        ports:
+          - containerPort: 27017
+        volumeMounts:
+          - name: mongo-persistent-storage
+            mountPath: /data/db
+      volumes:
+        - emptyDir:
+            medium: ""
+          name: mongo-persistent-storage
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongo
+  namespace: logging
+  labels:
+    name: mongo
+spec:
+  ports:
+    - port: 27017
+      targetPort: 27017
+  clusterIP: None
+  selector:
+    role: mongo
+---
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: k8s-role
+subjects:
+- kind: ServiceAccount
+  name: k8s
+  namespace: logging
+roleRef:
+  kind: ClusterRole
+  name: cluster-admin
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: k8s
+  namespace: logging
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: job-mongo-replicaset
+  namespace: logging
+spec:
+  template:
+    spec:
+      serviceAccountName: k8s
+      containers:
+      - name: mongo-replicaset
+        image: bitnami/kubectl
+        args: ["exec", "mongo-0", "-n", "logging", "--", "mongo", "--host", "mongo-0.mongo.logging.svc.cluster.local:27017", "--eval", "rs.initiate({_id:\"rs0\",members:[{\"_id\":0,\"host\":\"mongo-0.mongo.logging.svc.cluster.local:27017\",\"priority\":2}, {\"_id\":1,\"host\":\"mongo-1.mongo.logging.svc.cluster.local:27017\",\"priority\":0},{\"_id\":2,\"host\":\"mongo-2.mongo.logging.svc.cluster.local:27017\",\"priority\":0}]})"]
+      initContainers:
+      - name: init-myservice
+        image: busybox
+        command: ['sh', '-c', 'echo The app is running! && sleep 30']
+      restartPolicy: OnFailure
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 60
+---
 apiVersion: v1
 kind: Service
 metadata:
@@ -630,6 +734,7 @@ spec:
         - chown -R 1100:1100 ./graylog_journal
         - chown -R 1100:1100 /usr/share/graylog/data/journal
         - chown -R 1100:1100 /usr/share/graylog/data/journal/graylog2-committed-read-offset
+        - sleep 40
         image: busybox:1.29.2
         imagePullPolicy: IfNotPresent
         name: set-dir-owner
@@ -780,6 +885,7 @@ spec:
         - chown -R 1100:1100 ./graylog_journal
         - chown -R 1100:1100 /usr/share/graylog/data/journal
         - chown -R 1100:1100 /usr/share/graylog/data/journal/graylog2-committed-read-offset
+        - sleep 40
         image: busybox:1.29.2
         imagePullPolicy: IfNotPresent
         name: set-dir-owner
@@ -837,21 +943,78 @@ spec:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: mongodb-config
+  name: graylog-payload
   namespace: logging
   labels:
-    app: mongodb
+    app: graylog-paylod
 data:
-  mongod.conf: |
-    replication:
-       replSetName: "rs01"
-    net:
-       port: 27017
-       bindIp: 0.0.0.0
-    storage:
-      dbPath: /data/db
-      journal:
-        enabled: true
-    processManagement:
-      timeZoneInfo: /usr/share/zoneinfo
+  payload.json: |
+    {
+    "title": "Fluent-Bit GELF TCP input",
+    "type": "org.graylog2.inputs.gelf.tcp.GELFTCPInput",
+    "global": true,
+    "configuration":   {
+          "recv_buffer_size": 1048576,
+          "tcp_keepalive": false,
+          "use_null_delimiter": true,
+          "number_worker_threads": 1,
+          "tls_client_auth_cert_file": "",
+          "bind_address": "0.0.0.0",
+          "tls_cert_file": "",
+          "decompress_size_limit": 8388608,
+          "port": 12201,
+          "tls_key_file": "",
+          "tls_enable": false,
+          "tls_key_password": "",
+          "max_message_size": 2097152,
+          "tls_client_auth": "disabled",
+          "override_source": null
+        },
+    "node": ""
+    }
 ---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: job-graylog-input
+  namespace: logging
+spec:
+  ttlSecondsAfterFinished: 60
+  template:
+    spec:
+      serviceAccountName: k8s
+      containers:
+      - name: graylog-input
+        env:
+        - name: MY_HOST_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.hostIP
+        image: tutum/curl
+        args:
+        - curl
+        - -s
+        - -u
+        - admin:admin
+        - -H
+        - 'Content-Type: application/json'
+        - -XPOST
+        - http://graylog:80/api/system/inputs
+        - -d
+        - '@payload.json'
+        - -H
+        - 'X-Requested-By: cli'
+        volumeMounts:
+        - name: payload
+          mountPath: /payload.json
+          subPath: payload.json
+      initContainers:
+      - name: init-myservice
+        image: busybox
+        command: ['sh', '-c', 'echo The app is running! && sleep 185']
+      restartPolicy: Never
+      volumes:
+      - name: payload
+        configMap:
+          name: graylog-payload
+  backoffLimit: 1

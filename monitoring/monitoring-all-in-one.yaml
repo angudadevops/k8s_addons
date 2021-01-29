@@ -890,7 +890,7 @@ metadata:
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: kube-state-metrics
+  name: cluster-admin
 subjects:
 - kind: ServiceAccount
   name: kube-state-metrics
@@ -916,7 +916,7 @@ spec:
       serviceAccountName: kube-state-metrics
       containers:
       - name: kube-state-metrics
-        image: quay.io/coreos/kube-state-metrics:v1.1.0
+        image: quay.io/coreos/kube-state-metrics:v2.0.0-beta
         ports:
         - name: http-metrics
           containerPort: 8080
