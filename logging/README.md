@@ -4,6 +4,7 @@
 
 Run below playbook to install Fluent-Bit, ElasticSearch, LogStash, Graylog, Kibana
 
+## Dev Logging
 ```
 kubectl apply -f logging-all-in-one.yaml
 ```
@@ -11,6 +12,13 @@ kubectl apply -f logging-all-in-one.yaml
 `logging-all-in-one.yaml` represents below archtechture 
 
 ![logging-arch](./Logging-Arch.png)
+
+
+## Prod Logging
+
+`prod-logging.yaml` represents below architecture 
+
+![prod-logging](./Logging-Prod-Arch.png)
 
 
 If you want to explore individual stack, please go through below steps 
@@ -65,4 +73,10 @@ Access Kibana with nodePort as 31113 like below
   ```
   Example: 
    http://10.104.67.161:31113
+  ```
+Access Graylog with nodePort as 31050 like below
+
+ ```
+  Example:
+   http://10.104.67.161:31050
   ```
