@@ -774,16 +774,8 @@ spec:
   - name: "514"
     port: 514
     targetPort: 514
-  - name: 514-udp
-    port: 514
-    protocol: UDP
-    targetPort: 514
   - name: "12201"
     port: 12201
-    targetPort: 12201
-  - name: 12201-udp
-    port: 12201
-    protocol: UDP
     targetPort: 12201
   selector:
     app: graylog-master
@@ -925,16 +917,8 @@ spec:
   - name: "514"
     port: 514
     targetPort: 514
-  - name: 514-udp
-    port: 514
-    protocol: UDP
-    targetPort: 514
   - name: "12201"
     port: 12201
-    targetPort: 12201
-  - name: 12201-udp
-    port: 12201
-    protocol: UDP
     targetPort: 12201
   selector:
     app: graylog-slave
