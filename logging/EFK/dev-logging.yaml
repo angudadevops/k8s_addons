@@ -1,0 +1,471 @@
+kind: Namespace
+apiVersion: v1
+metadata:
+  name: efk
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: logging-pv-volume
+  labels:
+    type: local
+spec:
+  storageClassName: manual
+  persistentVolumeReclaimPolicy: Recycle
+  capacity:
+    storage: 10Gi
+  accessModes:
+    - ReadWriteOnce
+  hostPath:
+    path: "/mnt/data"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fluent-bit-config
+  namespace: efk
+  labels:
+    k8s-app: fluent-bit
+data:
+  # Configuration files: server, input, filters and output
+  # ======================================================
+  fluent-bit.conf: |
+    [SERVICE]
+        Flush         1
+        Log_Level     info
+        Daemon        off
+        Parsers_File  parsers.conf
+        HTTP_Server   On
+        HTTP_Listen   0.0.0.0
+        HTTP_Port     2020
+    @INCLUDE input-kubernetes.conf
+    @INCLUDE filter-kubernetes.conf
+    @INCLUDE output-elasticsearch.conf
+  input-kubernetes.conf: |
+    [INPUT]
+        Name              tail
+        Tag               kube.*
+        Path              /var/log/containers/*.log
+        Parser            docker
+        DB                /var/log/flb_kube.db
+        Mem_Buf_Limit     5MB
+        Skip_Long_Lines   On
+        Refresh_Interval  10
+  filter-kubernetes.conf: |
+    [FILTER]
+        Name                kubernetes
+        Match               kube.*
+        Kube_URL            https://kubernetes.default.svc:443
+        Kube_CA_File        /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        Kube_Token_File     /var/run/secrets/kubernetes.io/serviceaccount/token
+        Kube_Tag_Prefix     kube.var.log.containers.
+        Merge_Log           On
+        Merge_Log_Key       log_processed
+        K8S-Logging.Parser  On
+        K8S-Logging.Exclude Off
+  output-elasticsearch.conf: |
+    [OUTPUT]
+        Name            es
+        Match           *
+        Host            ${FLUENT_ELASTICSEARCH_HOST}
+        Port            ${FLUENT_ELASTICSEARCH_PORT}
+        HTTP_User       ${ELASTICSEARCH_USERNAME}
+        HTTP_Passwd     ${ELASTICSEARCH_PASSWORD}
+        Replace_Dots    On
+        Retry_Limit     False
+        Logstash_Format True
+        Logstash_Prefix fluent-bit
+  parsers.conf: |
+    [PARSER]
+        Name   json
+        Format json
+        Time_Key time
+        Time_Format %d/%b/%Y:%H:%M:%S %z
+    [PARSER]
+        Name        docker
+        Format      json
+        Time_Key    time
+        Time_Format %Y-%m-%dT%H:%M:%S.%L
+        Time_Keep   On
+    [PARSER]
+        Name        syslog
+        Format      regex
+        Regex       ^\<(?<pri>[0-9]+)\>(?<time>[^ ]* {1,2}[^ ]* [^ ]*) (?<host>[^ ]*) (?<ident>[a-zA-Z0-9_\/\.\-]*)(?:\[(?<pid>[0-9]+)\])?(?:[^\:]*\:)? *(?<message>.*)$
+        Time_Key    time
+        Time_Format %b %d %H:%M:%S
+---
+apiVersion: rbac.authorization.k8s.io/v1beta1
+kind: ClusterRoleBinding
+metadata:
+  name: fluent-bit-read
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: fluent-bit-read
+subjects:
+- kind: ServiceAccount
+  name: fluent-bit
+  namespace: efk
+---
+apiVersion: rbac.authorization.k8s.io/v1beta1
+kind: ClusterRole
+metadata:
+  name: fluent-bit-read
+rules:
+- apiGroups: [""]
+  resources:
+  - namespaces
+  - pods
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: fluent-bit
+  namespace: efk
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: fluent-bit
+  namespace: efk
+  labels:
+    component: fluent-bit-logging
+    version: v1
+    kubernetes.io/cluster-service: "true"
+spec:
+  selector:
+    matchLabels:
+      component: fluent-bit-logging
+  template:
+    metadata:
+      labels:
+        component: fluent-bit-logging
+        version: v1
+        kubernetes.io/cluster-service: "true"
+    spec:
+      containers:
+      - name: fluent-bit
+        image: fluent/fluent-bit
+        env:
+        - name: FLUENT_ELASTICSEARCH_HOST
+          value: "elasticsearch" # the name of the previous es-svc.yml 
+        - name: FLUENT_ELASTICSEARCH_PORT
+          value: "9200" # the port of the previous es-svc.yml 
+        - name: ELASTICSEARCH_USERNAME
+          value: elastic
+        - name: ELASTICSEARCH_PASSWORD
+          value: changeme
+        volumeMounts:
+        - name: varlog
+          mountPath: /var/log
+        - name: varlibdockercontainers
+          mountPath: /var/lib/docker/containers
+          readOnly: true
+        - name: fluent-bit-config
+          mountPath: /fluent-bit/etc/
+      terminationGracePeriodSeconds: 10
+      volumes:
+      - name: varlog
+        hostPath:
+          path: /var/log
+      - name: varlibdockercontainers
+        hostPath:
+          path: /var/lib/docker/containers
+      - name: fluent-bit-config
+        configMap:
+          name: fluent-bit-config # name of the previously created ConfigMap
+      initContainers:
+      - command:
+        - sh
+        - -c
+        - sleep 100
+        image: busybox
+        imagePullPolicy: IfNotPresent
+        name: set-dir-owner
+        resources: {}
+        securityContext:
+          privileged: true
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+      serviceAccountName: fluent-bit
+      tolerations:
+      - key: node-role.kubernetes.io/master
+        operator: Exists
+        effect: NoSchedule
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: es-password-setup
+  namespace: efk
+  labels:
+    app: elasticsearch
+data:
+  es-password-setup: |
+    #!/usr/bin/expect -f
+
+    set timeout -1
+    spawn bin/elasticsearch-setup-passwords interactive --batch
+    expect "elastic]: "
+    send -- "changeme\n"
+    expect "elastic]: "
+    send -- "changeme\n"
+    expect "apm_system]: "
+    send -- "changeme\n"
+    expect "apm_system]: "
+    send -- "changeme\n"
+    expect "kibana_system]: "
+    send -- "changeme\n"
+    expect "kibana_system]: "
+    send -- "changeme\n"
+    expect "logstash_system]: "
+    send -- "changeme\n"
+    expect "logstash_system]: "
+    send -- "changeme\n"
+    expect "beats_system]: "
+    send -- "changeme\n"
+    expect "beats_system]: "
+    send -- "changeme\n"
+    expect "remote_monitoring_user]: "
+    send -- "changeme\n"
+    expect "remote_monitoring_user]: "
+    send -- "changeme\n"
+    expect eof
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: elasticsearch
+  namespace: efk
+  labels:
+    app: elasticsearch
+    k8s-app: elasticsearch-logging
+    kubernetes.io/cluster-service: "true"
+    addonmanager.kubernetes.io/mode: Reconcile
+    kubernetes.io/name: "Elasticsearch"
+spec:
+  selector:
+    app: elasticsearch
+  ports:
+    - port: 9200
+      protocol: TCP
+      name: db
+    - port: 9300
+      name: inter-node
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: elasticsearch
+  namespace: efk
+  labels:
+    k8s-app: elasticsearch-logging
+    addonmanager.kubernetes.io/mode: Reconcile
+---
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: elasticsearch-logging
+  namespace: efk
+  labels:
+    k8s-app: elasticsearch-logging
+    addonmanager.kubernetes.io/mode: Reconcile
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - "services"
+  - "namespaces"
+  - "endpoints"
+  verbs:
+  - "get"
+---
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: elasticsearch
+  namespace: efk
+  labels:
+    k8s-app: elasticsearch-logging
+    addonmanager.kubernetes.io/mode: Reconcile
+subjects:
+- kind: ServiceAccount
+  name: elasticsearch
+  namespace: efk
+  apiGroup: ""
+roleRef:
+  kind: ClusterRole
+  name: elasticsearch-logging
+  apiGroup: ""
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: elasticsearch
+  namespace: efk
+  labels:
+    k8s-app: elasticsearch-logging
+    version: v7.4.2
+    addonmanager.kubernetes.io/mode: Reconcile
+spec:
+  serviceName: elasticsearch
+  replicas: 1
+  selector:
+    matchLabels:
+      app: elasticsearch
+  template:
+    metadata:
+      labels:
+        app: elasticsearch
+        k8s-app: elasticsearch-logging
+    spec:
+      serviceAccountName: elasticsearch
+      containers:
+      - name: elasticsearch
+        image: docker.elastic.co/elasticsearch/elasticsearch:7.10.0
+        lifecycle:
+          postStart:
+            exec:
+              command: ["/bin/sh", "-c", "yum install expect -y; ls -lrt; sleep 20; expect es-password-setup"]
+        securityContext:
+          capabilities:
+            add: ["SYS_CHROOT"]
+        resources:
+            limits:
+              cpu: 1000m
+              memory: 3Gi
+            requests:
+              cpu: 100m
+              memory: 3Gi
+        ports:
+        - containerPort: 9200
+          name: db
+          protocol: TCP
+        - containerPort: 9300
+          name: transport
+          protocol: TCP
+        livenessProbe:
+          tcpSocket:
+            port: transport
+          initialDelaySeconds: 5
+          timeoutSeconds: 10
+        readinessProbe:
+          tcpSocket:
+            port: transport
+          initialDelaySeconds: 5
+          timeoutSeconds: 10
+        volumeMounts:
+        - name: elasticsearch-data
+          mountPath: /usr/share/elasticsearch/data
+        - name: password
+          mountPath: /usr/share/elasticsearch/es-password-setup
+          subPath: es-password-setup
+        env:
+          - name: "NAMESPACE"
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.name
+          - name: cluster.name
+            value: kubernetes-logging
+          - name: discovery.type
+            value: single-node
+          - name: xpack.security.enabled
+            value: "true"
+            # - name: ES_JAVA_OPTS
+      initContainers:
+      - name: increase-vm-max-map
+        image: registry.opensuse.org/opensuse/busybox:latest
+        imagePullPolicy: Always
+        command:
+        - /bin/sh
+        - -c
+        - |
+          sysctl -w vm.max_map_count=262144
+          chown -R 1000:1000 /usr/share/elasticsearch/
+        volumeMounts:
+        - mountPath: /usr/share/elasticsearch/data
+          name: elasticsearch-data
+        securityContext:
+          privileged: true
+      volumes:    
+      - name: password
+        configMap:
+          name: es-password-setup
+  volumeClaimTemplates:
+  - metadata:
+      name: elasticsearch-data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: "local-path"
+      resources:
+        requests:
+          storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kibana
+  namespace: efk
+  labels:
+    app: kibana
+spec:
+  ports:
+  - port: 5601
+    nodePort: 31121
+  selector:
+    app: kibana
+  type: NodePort
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kibana
+  namespace: efk
+  labels:
+    app: kibana
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kibana
+  strategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: kibana
+    spec:
+      containers:
+      - name: kibana
+        image: docker.elastic.co/kibana/kibana:7.10.0
+        resources:
+          limits:
+            cpu: 1000m
+          requests:
+            cpu: 100m
+        env:
+          - name: ELASTICSEARCH_URL
+            value: http://elasticsearch:9200
+          - name: xpack.security.enabled
+            value: "true"
+          - name: ELASTICSEARCH_USERNAME
+            value: elastic
+          - name: ELASTICSEARCH_PASSWORD
+            value: changeme
+        ports:
+        - containerPort: 5601
+      initContainers:
+      - command:
+        - sh
+        - -c
+        - sleep 100
+        image: busybox
+        imagePullPolicy: IfNotPresent
+        name: set-dir-owner
+        resources: {}
+        securityContext:
+          privileged: true
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+---

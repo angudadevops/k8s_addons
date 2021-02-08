@@ -25,7 +25,6 @@ data:
     @INCLUDE input-kubernetes.conf
     @INCLUDE filter-kubernetes.conf
     @INCLUDE output-elasticsearch.conf
-    @INCLUDE output-graylog.conf
   input-kubernetes.conf: |
     [INPUT]
         Name              tail
@@ -54,33 +53,13 @@ data:
         Match           *
         Host            ${FLUENT_ELASTICSEARCH_HOST}
         Port            ${FLUENT_ELASTICSEARCH_PORT}
+        HTTP_User       ${ELASTICSEARCH_USERNAME}
+        HTTP_Passwd     ${ELASTICSEARCH_PASSWORD}
         Replace_Dots    On
         Retry_Limit     False
         Logstash_Format True
         Logstash_Prefix fluent-bit
   parsers.conf: |
-    [PARSER]
-        Name   apache
-        Format regex
-        Regex  ^(?<host>[^ ]*) [^ ]* (?<user>[^ ]*) \[(?<time>[^\]]*)\] "(?<method>\S+)(?: +(?<path>[^\"]*?)(?: +\S*)?)?" (?<code>[^ ]*) (?<size>[^ ]*)(?: "(?<referer>[^\"]*)" "(?<agent>[^\"]*)")?$
-        Time_Key time
-        Time_Format %d/%b/%Y:%H:%M:%S %z
-    [PARSER]
-        Name   apache2
-        Format regex
-        Regex  ^(?<host>[^ ]*) [^ ]* (?<user>[^ ]*) \[(?<time>[^\]]*)\] "(?<method>\S+)(?: +(?<path>[^ ]*) +\S*)?" (?<code>[^ ]*) (?<size>[^ ]*)(?: "(?<referer>[^\"]*)" "(?<agent>[^\"]*)")?$
-        Time_Key time
-        Time_Format %d/%b/%Y:%H:%M:%S %z
-    [PARSER]
-        Name   apache_error
-        Format regex
-        Regex  ^\[[^ ]* (?<time>[^\]]*)\] \[(?<level>[^\]]*)\](?: \[pid (?<pid>[^\]]*)\])?( \[client (?<client>[^\]]*)\])? (?<message>.*)$
-    [PARSER]
-        Name   nginx
-        Format regex
-        Regex ^(?<remote>[^ ]*) (?<host>[^ ]*) (?<user>[^ ]*) \[(?<time>[^\]]*)\] "(?<method>\S+)(?: +(?<path>[^\"]*?)(?: +\S*)?)?" (?<code>[^ ]*) (?<size>[^ ]*)(?: "(?<referer>[^\"]*)" "(?<agent>[^\"]*)")?$
-        Time_Key time
-        Time_Format %d/%b/%Y:%H:%M:%S %z
     [PARSER]
         Name   json
         Format json
@@ -157,6 +136,10 @@ spec:
           value: "elasticsearch" # the name of the previous es-svc.yml 
         - name: FLUENT_ELASTICSEARCH_PORT
           value: "9200" # the port of the previous es-svc.yml 
+        - name: ELASTICSEARCH_USERNAME
+          value: elastic
+        - name: ELASTICSEARCH_PASSWORD
+          value: changeme
         volumeMounts:
         - name: varlog
           mountPath: /var/log
@@ -176,11 +159,63 @@ spec:
       - name: fluent-bit-config
         configMap:
           name: fluent-bit-config # name of the previously created ConfigMap
+      initContainers:
+      - command:
+        - sh
+        - -c
+        - sleep 100
+        image: busybox
+        imagePullPolicy: IfNotPresent
+        name: set-dir-owner
+        resources: {}
+        securityContext:
+          privileged: true
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
       serviceAccountName: fluent-bit
       tolerations:
       - key: node-role.kubernetes.io/master
         operator: Exists
         effect: NoSchedule
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: es-password-setup
+  namespace: efk
+  labels:
+    app: elasticsearch
+data:
+  es-password-setup: |
+    #!/usr/bin/expect -f
+
+    set timeout -1
+    spawn bin/elasticsearch-setup-passwords interactive --batch
+    expect "elastic]: "
+    send -- "changeme\n"
+    expect "elastic]: "
+    send -- "changeme\n"
+    expect "apm_system]: "
+    send -- "changeme\n"
+    expect "apm_system]: "
+    send -- "changeme\n"
+    expect "kibana_system]: "
+    send -- "changeme\n"
+    expect "kibana_system]: "
+    send -- "changeme\n"
+    expect "logstash_system]: "
+    send -- "changeme\n"
+    expect "logstash_system]: "
+    send -- "changeme\n"
+    expect "beats_system]: "
+    send -- "changeme\n"
+    expect "beats_system]: "
+    send -- "changeme\n"
+    expect "remote_monitoring_user]: "
+    send -- "changeme\n"
+    expect "remote_monitoring_user]: "
+    send -- "changeme\n"
+    expect eof
 ---
 apiVersion: v1
 kind: Service
@@ -259,6 +294,7 @@ metadata:
     addonmanager.kubernetes.io/mode: Reconcile
 spec:
   serviceName: elasticsearch
+  podManagementPolicy: Parallel
   replicas: 1
   selector:
     matchLabels:
@@ -273,7 +309,10 @@ spec:
       containers:
       - name: elasticsearch
         image: docker.elastic.co/elasticsearch/elasticsearch:7.10.0
-        imagePullPolicy: Always
+        lifecycle:
+          postStart:
+            exec:
+              command: ["/bin/sh", "-c", "yum install expect -y; ls -lrt; sleep 40; expect es-password-setup"]
         securityContext:
           capabilities:
             add: ["SYS_CHROOT"]
@@ -304,6 +343,9 @@ spec:
         volumeMounts:
         - name: elasticsearch-data
           mountPath: /usr/share/elasticsearch/data
+        - name: password
+          mountPath: /usr/share/elasticsearch/es-password-setup
+          subPath: es-password-setup
         env:
           - name: "NAMESPACE"
             valueFrom:
@@ -312,22 +354,142 @@ spec:
           - name: cluster.name
             value: kubernetes-logging
           - name: discovery.seed_hosts
-            value: "elasticsearch.logging"
+            value: "elasticsearch"
           - name: cluster.initial_master_nodes
-            value: "elasticsearch-0"
+            value: "elasticsearch-0, elasticsearchnode-0, elasticsearchnode-1"
+          - name: xpack.security.enabled
+            value: "true"
             # - name: ES_JAVA_OPTS
-            #   value: "-Xms512m -Xmx512m"
-      volumes:
-          - emptyDir:
-              medium: ""
-            name: elasticsearch-data
       initContainers:
       - name: increase-vm-max-map
         image: registry.opensuse.org/opensuse/busybox:latest
         imagePullPolicy: Always
-        command: ["sysctl", "-w", "vm.max_map_count=262144"]
+        command:
+        - /bin/sh
+        - -c
+        - |
+          sysctl -w vm.max_map_count=262144
+          chown -R 1000:1000 /usr/share/elasticsearch/
+        volumeMounts:
+        - mountPath: /usr/share/elasticsearch/data
+          name: elasticsearch-data
         securityContext:
           privileged: true
+      volumes:    
+      - name: password
+        configMap:
+          name: es-password-setup
+  volumeClaimTemplates:
+  - metadata:
+      name: elasticsearch-data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: "local-path"
+      resources:
+        requests:
+          storage: 1Gi 
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: elasticsearchnode
+  namespace: efk
+  labels:
+    k8s-app: elasticsearch-logging
+    version: v7.4.2
+    addonmanager.kubernetes.io/mode: Reconcile
+spec:
+  serviceName: elasticsearch
+  podManagementPolicy: Parallel
+  replicas: 2
+  selector:
+    matchLabels:
+      app: elasticsearch
+  template:
+    metadata:
+      labels:
+        app: elasticsearch
+        k8s-app: elasticsearch-logging
+    spec:
+      serviceAccountName: elasticsearch
+      containers:
+      - name: elasticsearch
+        image: docker.elastic.co/elasticsearch/elasticsearch:7.10.0
+        securityContext:
+          capabilities:
+            add: ["SYS_CHROOT"]
+        resources:
+            limits:
+              cpu: 1000m
+              memory: 3Gi
+            requests:
+              cpu: 100m
+              memory: 3Gi
+        ports:
+        - containerPort: 9200
+          name: db
+          protocol: TCP
+        - containerPort: 9300
+          name: transport
+          protocol: TCP
+        livenessProbe:
+          tcpSocket:
+            port: transport
+          initialDelaySeconds: 5
+          timeoutSeconds: 10
+        readinessProbe:
+          tcpSocket:
+            port: transport
+          initialDelaySeconds: 5
+          timeoutSeconds: 10
+        volumeMounts:
+        - name: elasticsearch-data
+          mountPath: /usr/share/elasticsearch/data
+        - name: password
+          mountPath: /usr/share/elasticsearch/es-password-setup
+          subPath: es-password-setup
+        env:
+          - name: "NAMESPACE"
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.name
+          - name: cluster.name
+            value: kubernetes-logging
+          - name: discovery.seed_hosts
+            value: "elasticsearch"
+          - name: cluster.initial_master_nodes
+            value: "elasticsearch-0,elasticsearchnode-0, elasticsearchnode-1""
+          - name: NODE_MASTER
+            value: "false"
+            # - name: ES_JAVA_OPTS
+      initContainers:
+      - name: increase-vm-max-map
+        image: registry.opensuse.org/opensuse/busybox:latest
+        imagePullPolicy: Always
+        command:
+        - /bin/sh
+        - -c
+        - |
+          sysctl -w vm.max_map_count=262144
+          chown -R 1000:1000 /usr/share/elasticsearch/
+        volumeMounts:
+        - mountPath: /usr/share/elasticsearch/data
+          name: elasticsearch-data
+        securityContext:
+          privileged: true
+      volumes:
+      - name: password
+        configMap:
+          name: es-password-setup
+  volumeClaimTemplates:
+  - metadata:
+      name: elasticsearch-data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: "local-path"
+      resources:
+        requests:
+          storage: 1Gi
 ---
 apiVersion: v1
 kind: Service
@@ -366,7 +528,6 @@ spec:
       containers:
       - name: kibana
         image: docker.elastic.co/kibana/kibana:7.10.0
-        imagePullPolicy: Always
         resources:
           limits:
             cpu: 1000m
@@ -375,6 +536,25 @@ spec:
         env:
           - name: ELASTICSEARCH_URL
             value: http://elasticsearch:9200
+          - name: xpack.security.enabled
+            value: "true"
+          - name: ELASTICSEARCH_USERNAME
+            value: elastic
+          - name: ELASTICSEARCH_PASSWORD
+            value: changeme
         ports:
         - containerPort: 5601
-
+      initContainers:
+      - command:
+        - sh
+        - -c
+        - sleep 100
+        image: busybox
+        imagePullPolicy: IfNotPresent
+        name: set-dir-owner
+        resources: {}
+        securityContext:
+          privileged: true
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+---

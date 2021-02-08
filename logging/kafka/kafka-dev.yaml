@@ -204,7 +204,7 @@ spec:
             add: ["SYS_CHROOT"]
         resources:
             limits:
-              cpu: 1000m
+              cpu: 1500m
               memory: 3Gi
             requests:
               cpu: 100m
@@ -330,6 +330,21 @@ data:
         K8S-Logging.Parser  On
         K8S-Logging.Exclude Off
 
+    # ${HOSTNAME} returns the host name.
+    # But Fluentbit runs in a container. So, it is not meaningful.
+    # Instead, copy the host name from the Kubernetes object.
+    [FILTER]
+        Name nest
+        Match *
+        Operation lift
+        Nested_under kubernetes
+    # Remove offending fields, see: https://github.com/fluent/fluent-bit/issues/1291
+    [FILTER]
+        Name record_modifier
+        Match *
+        Remove_key annotations
+        Remove_key labels
+
   output-kafka.conf: |
     [OUTPUT]
         Name           kafka
@@ -347,17 +362,15 @@ data:
 
   parsers.conf: |
     [PARSER]
-        Name   json
-        Format json
-        Time_Key time
-        Time_Format %d/%b/%Y:%H:%M:%S %z
-
-    [PARSER]
         Name        docker
         Format      json
         Time_Key    time
         Time_Format %Y-%m-%dT%H:%M:%S.%L
         Time_Keep   On
+        # Command      |  Decoder | Field | Optional Action
+        # =============|==================|=================
+        Decode_Field_As   escaped_utf8    log  do_next
+        Decode_Field_As   json       log
 
     [PARSER]
         Name        syslog
@@ -507,16 +520,16 @@ data:
     }
     filter {
       mutate { gsub => [ "message", "@timestamp", "_@timestamp"] }
-
-      json {source => "message"}
-
+      if [message] =~ "^\{.*\}*$" {
+           json {source => "message"}
+      }
       date {
           match => [ "_@timestamp", "UNIX" ]
           remove_field => "_@timestamp"
           remove_tag => "_timestampparsefailure"
       }
       mutate {
-        remove_field => ["message", "time", "@version", "stream", "log_processed", "[kubernetes][annotations]", "[kubernetes][labels]"]
+        remove_field => ["message", "time", "@version", "stream", "log_processed"]
       }
     }
     output {
