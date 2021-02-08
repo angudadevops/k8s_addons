@@ -4,22 +4,6 @@ metadata:
   name: efk
 ---
 apiVersion: v1
-kind: PersistentVolume
-metadata:
-  name: logging-pv-volume
-  labels:
-    type: local
-spec:
-  storageClassName: manual
-  persistentVolumeReclaimPolicy: Recycle
-  capacity:
-    storage: 10Gi
-  accessModes:
-    - ReadWriteOnce
-  hostPath:
-    path: "/mnt/data"
----
-apiVersion: v1
 kind: ConfigMap
 metadata:
   name: fluent-bit-config
