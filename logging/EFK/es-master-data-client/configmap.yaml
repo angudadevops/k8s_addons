@@ -1,0 +1,37 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: es-password-setup
+  namespace: logging
+  labels:
+    app: elasticsearch
+data:
+  es-password-setup: |
+    #!/usr/bin/expect -f
+    set timeout -1
+    spawn bin/elasticsearch-setup-passwords interactive --batch
+    expect "elastic]: "
+    send -- "changeme\n"
+    expect "elastic]: "
+    send -- "changeme\n"
+    expect "apm_system]: "
+    send -- "changeme\n"
+    expect "apm_system]: "
+    send -- "changeme\n"
+    expect "kibana_system]: "
+    send -- "changeme\n"
+    expect "kibana_system]: "
+    send -- "changeme\n"
+    expect "logstash_system]: "
+    send -- "changeme\n"
+    expect "logstash_system]: "
+    send -- "changeme\n"
+    expect "beats_system]: "
+    send -- "changeme\n"
+    expect "beats_system]: "
+    send -- "changeme\n"
+    expect "remote_monitoring_user]: "
+    send -- "changeme\n"
+    expect "remote_monitoring_user]: "
+    send -- "changeme\n"
+    expect eof

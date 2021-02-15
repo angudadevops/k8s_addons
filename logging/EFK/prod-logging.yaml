@@ -458,7 +458,7 @@ spec:
           - name: discovery.seed_hosts
             value: "elasticsearch"
           - name: cluster.initial_master_nodes
-            value: "elasticsearch-0,elasticsearchnode-0, elasticsearchnode-1""
+            value: "elasticsearch-0,elasticsearchnode-0, elasticsearchnode-1"
           - name: NODE_MASTER
             value: "false"
             # - name: ES_JAVA_OPTS

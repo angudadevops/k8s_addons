@@ -1,0 +1,39 @@
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: k8s-role
+subjects:
+- kind: ServiceAccount
+  name: k8s
+  namespace: logging
+roleRef:
+  kind: ClusterRole
+  name: cluster-admin
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: k8s
+  namespace: logging
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: es-master-passwd-setup
+  namespace: logging
+spec:
+  template:
+    spec:
+      serviceAccountName: k8s
+      containers:
+      - name: es-master-passwd-setup
+        image: bitnami/kubectl
+        args: ["exec", "elasticsearch-master-0", "-n", "logging", "--", "expect", "es-password-setup"]
+      initContainers:
+      - name: init-myservice
+        image: busybox
+        command: ['sh', '-c', 'echo The app is running! && sleep 30']
+      restartPolicy: OnFailure
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 60

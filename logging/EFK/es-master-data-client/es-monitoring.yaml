@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: es-hq
+  namespace: logging
+  labels:
+    component: elasticsearch
+    role: hq
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      component: elasticsearch
+  template:
+    metadata:
+      labels:
+        component: elasticsearch
+        role: hq
+    spec:
+      containers:
+      - name: es-hq
+        image: elastichq/elasticsearch-hq:release-v3.5.12
+        env:
+        - name: HQ_DEFAULT_URL
+          value: http://elasticsearch:9200
+        resources:
+          limits:
+            cpu: 0.5
+        ports:
+        - containerPort: 5000
+          name: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hq
+  namespace: logging
+  labels:
+    component: elasticsearch
+    role: hq
+spec:
+  selector:
+    component: elasticsearch
+    role: hq
+  ports:
+  - name: http
+    port: 5000
+    nodePort: 31113
+  type: NodePort

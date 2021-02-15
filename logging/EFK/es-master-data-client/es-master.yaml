@@ -1,0 +1,88 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: elasticsearch-master
+  namespace: logging
+  labels:
+    app: elasticsearch-master
+    env: dev
+spec:
+  replicas: 3 # scale as desired (see NUMBER_OF_MASTERS below)
+  serviceName: elasticsearch-master
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app: elasticsearch-master
+  template:
+    metadata:
+      labels:
+        app: elasticsearch-master
+        env: dev
+    spec:
+      initContainers:
+      - name: init-sysctl
+        image: busybox:1.27.2
+        command:
+        - sysctl
+        - -w
+        - vm.max_map_count=262144
+        securityContext:
+          privileged: true
+      containers:
+      - name: elasticsearch-master
+        image: docker.elastic.co/elasticsearch/elasticsearch:7.11.0
+        imagePullPolicy: IfNotPresent
+        lifecycle:
+          postStart:
+            exec:
+              command: ["/bin/sh", "-c", "yum install expect -y"]
+        env:
+        - name: NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: node.name
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: discovery.seed_hosts
+          value: "elasticsearch-discovery"
+        - name: cluster.initial_master_nodes
+          value: elasticsearch-master-0, elasticsearch-master-1, elasticsearch-master-2
+        - name: cluster.name
+          value: elasticsearch
+        - name: node.master
+          value: "true"
+        - name: node.ingest
+          value: "false"
+        - name: node.data
+          value: "false"
+        - name: xpack.security.enabled
+          value: "true"
+        - name: ES_JAVA_OPTS
+          value: -Xms256m -Xmx256m
+        - name: PROCESSORS
+          valueFrom:
+            resourceFieldRef:
+              resource: limits.cpu
+        resources:
+          limits:
+            cpu: 1
+        ports:
+        - containerPort: 9300
+          name: transport
+        - containerPort: 9200
+          name: http
+        volumeMounts:
+        - name: storage
+          mountPath: /data
+        - name: password
+          mountPath: /usr/share/elasticsearch/es-password-setup
+          subPath: es-password-setup
+      volumes:
+      - emptyDir:
+          medium: ""
+        name: "storage"
+      - name: password
+        configMap:
+          name: es-password-setup

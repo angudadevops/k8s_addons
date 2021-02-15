@@ -1,0 +1,34 @@
+apiVersion: batch/v1beta1 #for API server versions >= 1.8.0 use batch/v1beta1
+kind: CronJob
+metadata:
+  name: curator
+  namespace: logging
+  labels:
+    app: curator
+spec:
+  schedule: "* 12 * * *"
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  startingDeadlineSeconds: 120
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - image: anguda/es-curator
+            imagePullPolicy: IfNotPresent
+            name: es-curator
+            command: ["/bin/sh","-c","'/curator/bootup.sh'"]
+            volumeMounts:
+              - mountPath: /curator/config
+                name: curator-config
+            env:
+              - name: ELASTIC_URL
+                value: "elasticsearch"
+              - name: RETENTION_DAYS
+                value: "4"
+          restartPolicy: OnFailure
+          volumes:
+            - name: curator-config
+              configMap:
+                name: curator-config

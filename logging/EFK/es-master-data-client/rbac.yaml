@@ -1,0 +1,33 @@
+kind: Namespace
+apiVersion: v1
+metadata:
+  name: logging
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: elasticsearch
+  namespace: logging
+  labels:
+    env: dev
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - endpoints
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: elasticsearch
+  namespace: logging
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: elasticsearch
+subjects:
+- kind: ServiceAccount
+  name: sa-elasticsearch
+  namespace: logging
