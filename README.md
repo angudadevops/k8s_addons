@@ -6,4 +6,4 @@ This repository help you to setup Kubernetes Addons like monitoring and Logging.
 - [Dashboard](https://github.com/angudadevops/k8s_addons/tree/master/dashboard)
 
 ### NOTE
-- These Addons are supported for kubernetes 1.15 or after
+- These Addons are supported for kubernetes 1.15 or later
