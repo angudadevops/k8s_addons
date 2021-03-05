@@ -20,7 +20,7 @@ if [[ $1 == 'create' ]] ; then
 	export k8sdashnodePort=$(kubectl get svc k8dash  -n kube-system -o jsonpath="{.spec.ports[?(@.port=="80")].nodePort}{'\n'}")
 	echo -e "Access Dashboard Using http://$hostIP:$k8sdashnodePort"
 	echo
-	echo -e "Dashboard Token:       $k8sdashtoken"
+	echo -e "K8sDash Token:       $k8sdashtoken"
 	echo
 elif [[ $1 == 'delete' ]]; then
 	kubectl delete -f k8dashboard.yaml
