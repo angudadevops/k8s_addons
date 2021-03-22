@@ -636,7 +636,7 @@ data:
        action: replace
 ---
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
  labels:
    name: prometheus
@@ -645,6 +645,7 @@ metadata:
  namespace: monitoring
 spec:
   replicas: 1
+  serviceName: prometheus
   selector:
     matchLabels:
       name: prometheus
@@ -666,10 +667,21 @@ spec:
         volumeMounts:
           - mountPath: "/etc/prometheus"
             name: config-prometheus
+          - mountPath: /prometheus
+            name: data-prometheus
       volumes:
       - name: config-prometheus
         configMap:
          name: prometheus-server-conf
+  volumeClaimTemplates:
+  - metadata:
+      name: data-prometheus
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: "local-path"
+      resources:
+        requests:
+          storage: 1Gi
 ---
 apiVersion: v1
 kind: Service
@@ -928,12 +940,13 @@ spec:
           timeoutSeconds: 5
 ---
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: alertmanager
   namespace: monitoring
 spec:
   replicas: 1
+  serviceName: alertmanager
   selector:
     matchLabels:
       app: alertmanager
@@ -957,7 +970,7 @@ spec:
           mountPath: /etc/alertmanager
         - name: templates-volume
           mountPath: /etc/alertmanager-templates
-        - name: alertmanager
+        - name: alertmanager-data
           mountPath: /alertmanager
       volumes:
       - name: config-volume
@@ -966,8 +979,15 @@ spec:
       - name: templates-volume
         configMap:
           name: alertmanager-templates
-      - name: alertmanager
-        emptyDir: {}
+  volumeClaimTemplates:
+   - metadata:
+       name: alertmanager-data
+     spec:
+       accessModes: [ "ReadWriteOnce" ]
+       storageClassName: "local-path"
+       resources:
+         requests:
+           storage: 1Gi      
 ---
 apiVersion: v1
 kind: Service

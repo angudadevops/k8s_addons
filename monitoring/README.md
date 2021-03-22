@@ -1,6 +1,10 @@
 # Kubernetes Monitoring 
 
-For prometheus storage, here i used to store as emptyDir, it's recommend to store as persistence volume 
+For prometheus storage,
+```
+kubectl apply -f https://raw.githubusercontent.com/rancher/local-path-provisioner/master/deploy/local-path-storage.yaml
+```
+
 Here grafana exposed as NodePort, that way you can access your grafana with nodeIP and NodePort 31114 
 
 Here Two ways to deploy kubernetes monitorting
