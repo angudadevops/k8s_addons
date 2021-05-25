@@ -1,0 +1,293 @@
+kind: Namespace
+apiVersion: v1
+metadata:
+  name: splunk
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: splunk
+  namespace: splunk
+spec:
+  type: NodePort
+  selector:
+    app: splunk
+  ports:
+  - protocol: TCP
+    port: 8088
+    targetPort: 8088
+    name: http
+    nodePort: 31120
+  - protocol: TCP
+    name: web
+    port: 8000
+    targetPort: 8000
+    nodePort: 31122
+  - protocol: TCP
+    name: api
+    port: 8089
+    targetPort: 8089
+    nodePort: 31123
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: splunk
+  namespace: splunk
+spec:
+  selector:
+    matchLabels:
+      app: splunk
+  replicas: 1
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 1
+  template:
+    metadata:
+      labels:
+        app: splunk
+    spec:
+      containers:
+      - name: splunk
+        image: splunk/splunk
+        env:
+        - name: SPLUNK_START_ARGS
+          value: "--accept-license"
+        - name: SPLUNK_PASSWORD
+          value: "splunk123"
+        ports:
+        - containerPort: 8088
+          name: http
+        - containerPort: 8000
+          name: web
+        - containerPort: 8089
+          name: api
+        resources:
+          requests:
+            cpu: 10m
+            memory: 256Mi
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: k8s
+  namespace: splunk
+---
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: k8s-role
+subjects:
+- kind: ServiceAccount
+  name: k8s
+  namespace: splunk
+roleRef:
+  kind: ClusterRole
+  name: cluster-admin
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: job-splunk
+  namespace: splunk
+spec:
+  template:
+    spec:
+      serviceAccountName: k8s
+      containers:
+      - name: mongo-replicaset
+        image: bitnami/kubectl
+        args: ["create", "secret", "generic", "splunktoken", "--from-file=splunk-hec-token=/tmp/test", "-n", "splunk"]
+        volumeMounts:
+        - name: shared-data
+          mountPath: /tmp
+      initContainers:
+      - name: init-myservice
+        image: busybox
+        command: ["sh", "-c", "echo The app is running! && sleep 40 && wget --no-check-certificate -O /bin/curl https://github.com/moparisthebest/static-curl/releases/download/v7.76.1/curl-amd64 && chmod +x /bin/curl && curl -s -k -u admin:splunk123 https://splunk:8089/servicesNS/admin/splunk_httpinput/data/inputs/http -d name=dev | grep 'name=\"token*' | awk -F'<' '{print $2}' | awk -F'>' '{print $2}' >> /tmp/test && cat /tmp/test" ]
+        volumeMounts:
+        - name: shared-data
+          mountPath: /tmp
+      restartPolicy: OnFailure
+      volumes:
+      - name: shared-data
+        emptyDir: {}
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 60
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fluent-bit-config
+  namespace: splunk
+  labels:
+    k8s-app: fluent-bit
+data:
+  # Configuration files: server, input, filters and output
+  # ======================================================
+  fluent-bit.conf: |
+    [SERVICE]
+        Flush         1
+        Log_Level     info
+        Daemon        off
+        Parsers_File  parsers.conf
+        HTTP_Server   On
+        HTTP_Listen   0.0.0.0
+        HTTP_Port     2020
+    @INCLUDE input-kubernetes.conf
+    @INCLUDE filter-kubernetes.conf
+    @INCLUDE output-splunk.conf
+  input-kubernetes.conf: |
+    [INPUT]
+        Name              tail
+        Tag               kube.*
+        Path              /var/log/containers/*.log
+        Parser            docker
+        DB                /var/log/flb_kube.db
+        Mem_Buf_Limit     5MB
+        Skip_Long_Lines   On
+        Refresh_Interval  10
+  filter-kubernetes.conf: |
+    [FILTER]
+        Name                kubernetes
+        Match               kube.*
+        Kube_URL            https://kubernetes.default.svc:443
+        Kube_CA_File        /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        Kube_Token_File     /var/run/secrets/kubernetes.io/serviceaccount/token
+        Kube_Tag_Prefix     kube.var.log.containers.
+        Merge_Log           On
+        Merge_Log_Key       log_processed
+        K8S-Logging.Parser  On
+        K8S-Logging.Exclude Off
+  output-splunk.conf: |
+    [OUTPUT]
+        Name        splunk
+        Match       *
+        Host        ${SPLUNK_HEC_HOST}
+        Port        ${SPLUNK_HEC_PORT}
+        TLS         On
+        TLS.Verify  Off
+        Splunk_Token ${SPLUNK_HEC_TOKEN}
+        Splunk_Send_Raw On
+  parsers.conf: |
+    [PARSER]
+        Name   json
+        Format json
+        Time_Key time
+        Time_Format %d/%b/%Y:%H:%M:%S %z
+    [PARSER]
+        Name        docker
+        Format      json
+        Time_Key    time
+        Time_Format %Y-%m-%dT%H:%M:%S.%L
+        Time_Keep   On
+    [PARSER]
+        Name        syslog
+        Format      regex
+        Regex       ^\<(?<pri>[0-9]+)\>(?<time>[^ ]* {1,2}[^ ]* [^ ]*) (?<host>[^ ]*) (?<ident>[a-zA-Z0-9_\/\.\-]*)(?:\[(?<pid>[0-9]+)\])?(?:[^\:]*\:)? *(?<message>.*)$
+        Time_Key    time
+        Time_Format %b %d %H:%M:%S
+---
+apiVersion: rbac.authorization.k8s.io/v1beta1
+kind: ClusterRoleBinding
+metadata:
+  name: fluent-bit-read
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: fluent-bit-read
+subjects:
+- kind: ServiceAccount
+  name: fluent-bit
+  namespace: splunk
+---
+apiVersion: rbac.authorization.k8s.io/v1beta1
+kind: ClusterRole
+metadata:
+  name: fluent-bit-read
+rules:
+- apiGroups: [""]
+  resources:
+  - namespaces
+  - pods
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: fluent-bit
+  namespace: splunk
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: fluent-bit
+  namespace: splunk
+  labels:
+    component: fluent-bit-logging
+    version: v1
+    kubernetes.io/cluster-service: "true"
+spec:
+  selector:
+    matchLabels:
+      component: fluent-bit-logging
+  template:
+    metadata:
+      labels:
+        component: fluent-bit-logging
+        version: v1
+        kubernetes.io/cluster-service: "true"
+    spec:
+      containers:
+      - name: fluent-bit
+        image: fluent/fluent-bit
+        env:
+        - name: SPLUNK_HEC_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: splunktoken
+              key: splunk-hec-token
+        - name: SPLUNK_HEC_HOST
+          value: "splunk"
+        - name: SPLUNK_HEC_PORT
+          value: "8088"
+        volumeMounts:
+        - name: varlog
+          mountPath: /var/log
+        - name: varlibdockercontainers
+          mountPath: /var/lib/docker/containers
+          readOnly: true
+        - name: fluent-bit-config
+          mountPath: /fluent-bit/etc/
+      terminationGracePeriodSeconds: 10
+      volumes:
+      - name: varlog
+        hostPath:
+          path: /var/log
+      - name: varlibdockercontainers
+        hostPath:
+          path: /var/lib/docker/containers
+      - name: fluent-bit-config
+        configMap:
+          name: fluent-bit-config # name of the previously created ConfigMap
+      initContainers:
+      - command:
+        - sh
+        - -c
+        - sleep 65
+        image: busybox
+        imagePullPolicy: IfNotPresent
+        name: set-dir-owner
+        resources: {}
+        securityContext:
+          privileged: true
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+      serviceAccountName: fluent-bit
+      tolerations:
+      - key: node-role.kubernetes.io/master
+        operator: Exists
+        effect: NoSchedule
+---

@@ -42,6 +42,14 @@ Deploy Logging stack end to end with one yaml. Please run the below command to i
    kubectl apply -f graylog/*
    ```
 
+## [Splunk For Kubernetes](https://github.com/angudadevops/k8s_addons/tree/master/logging/splunk)
+
+Deploy Logging stack end to end with one yaml. Please run the below command to install Splunk with Fluent-Bit
+
+   Below yaml helps you to setup fluent-bit, Splunk
+   ```
+   kubectl apply -f splunk/*
+   ```
 
 ## [Logging with EFK on Kubernetes](https://github.com/angudadevops/k8s_addons/tree/master/logging/EFK)
 
