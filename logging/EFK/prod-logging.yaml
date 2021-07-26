@@ -312,7 +312,7 @@ spec:
         lifecycle:
           postStart:
             exec:
-              command: ["/bin/sh", "-c", "yum install expect -y; ls -lrt; sleep 40; expect es-password-setup"]
+              command: ["/bin/sh", "-c", "yum install expect -y; ls -lrt; sleep 40; if ! type -P expect; then expect es-password-setup; exit; fi"]
         securityContext:
           capabilities:
             add: ["SYS_CHROOT"]
